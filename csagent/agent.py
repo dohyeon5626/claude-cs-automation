@@ -2,11 +2,11 @@ import json
 import logging
 import re
 import subprocess
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Optional, Tuple
 
-from db_handler import DatabaseHandler
-from git_handler import pull_repo
+from .repository import pull_repo
+from .service import Service
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +45,12 @@ def check_claude_cli(model: str):
     if version.returncode != 0:
         raise RuntimeError(f"Claude CLI 실행 실패: {version.stderr.strip()}")
 
-    # Authentication / runnability check via a minimal print-mode call
     cmd = ["claude", "-p", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
     try:
         ping = subprocess.run(
-            cmd,
-            input="OK",
-            capture_output=True,
-            text=True,
-            timeout=120,
+            cmd, input="OK", capture_output=True, text=True, timeout=120
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Claude CLI 인증 확인 중 시간이 초과되었습니다.")
@@ -75,57 +70,58 @@ def check_claude_cli(model: str):
 
 @dataclass
 class UserSession:
+    """One connected user's conversation state."""
+
     user_id: str
     service_id: Optional[str] = None
-    service_name: Optional[str] = None
-    service_description: Optional[str] = None
-    # Claude CLI session id — gives each user a persistent conversation context
+    # Claude CLI session id — gives the user a persistent conversation context
     cli_session_id: Optional[str] = None
 
-    def set_service(self, service_id: str, name: str, description: str):
+    def select_service(self, service_id: str):
         self.service_id = service_id
-        self.service_name = name
-        self.service_description = description
         self.cli_session_id = None  # fresh conversation when service changes
 
 
-class ClaudeHandler:
-    def __init__(
-        self,
-        model: str,
-        db_handler: DatabaseHandler,
-        github_branch: str,
-        repo_local_path: str,
-    ):
+class ClaudeAgent:
+    """
+    Drives the Claude CLI to answer CS questions against a service's
+    database and GitHub repository.
+    """
+
+    def __init__(self, model: str):
         self._model = model
-        self._db = db_handler
-        self._branch = github_branch
-        self._repo_path = repo_local_path
 
     def process_query(
         self,
         session: UserSession,
+        service: Service,
         user_query: str,
         status_callback: Callable[[str], None],
     ) -> str:
         """
-        Pull the repo, refresh the schema, then run an agentic loop where Claude
-        explores the repo and issues SELECT queries until it produces an answer.
-        Blocking — run inside an executor.
+        Pull the service's repo, refresh its schema, then run an agentic loop
+        where Claude explores the repo and issues SELECT queries until it
+        produces an answer. Blocking — run inside an executor.
         """
-        # 1. Pull the GitHub repo (non-fatal: fall back to the existing checkout)
+        db = service.database
+        repo_path = service.config.repo_path
+
+        # 1. Pull the repo (non-fatal: fall back to the existing checkout)
         status_callback("레포지토리를 동기화하고 있습니다...")
         try:
-            pull_repo(self._branch, self._repo_path)
+            pull_repo(service.config.github, repo_path)
         except RuntimeError as e:
-            logger.warning(f"Repo pull failed, using existing checkout: {e}")
+            logger.warning(
+                f"Repo pull failed for service '{service.id}', "
+                f"using existing checkout: {e}"
+            )
 
         # 2. Refresh the live database schema
         status_callback("데이터베이스 스키마를 확인하고 있습니다...")
-        live_schema = self._db.get_schema_introspection()
+        live_schema = db.get_schema()
 
         # 3. Agentic loop
-        turn_prompt = self._build_initial_prompt(session, live_schema, user_query)
+        turn_prompt = self._build_initial_prompt(service, live_schema, user_query)
 
         for iteration in range(_MAX_ITERATIONS):
             status_callback(
@@ -135,7 +131,7 @@ class ClaudeHandler:
             )
 
             reply, new_session_id = self._invoke_cli(
-                turn_prompt, session.cli_session_id
+                turn_prompt, session.cli_session_id, repo_path
             )
             if session.cli_session_id is None:
                 session.cli_session_id = new_session_id
@@ -145,7 +141,7 @@ class ClaudeHandler:
             if action == "QUERY":
                 preview = " ".join(payload.split())[:70]
                 status_callback(f"DB 조회 중: {preview}...")
-                turn_prompt = self._run_query(payload)
+                turn_prompt = self._run_query(db, payload)
             else:  # ANSWER (or fallback)
                 return payload
 
@@ -157,7 +153,7 @@ class ClaudeHandler:
     # ── Prompt building ───────────────────────────────────────────────────────
 
     def _build_initial_prompt(
-        self, session: UserSession, live_schema: str, user_query: str
+        self, service: Service, live_schema: str, user_query: str
     ) -> str:
         return (
             "# CS 데이터 조회 요청\n\n"
@@ -165,8 +161,8 @@ class ClaudeHandler:
             "현재 작업 디렉터리는 대상 서비스의 GitHub 레포지토리입니다. "
             "도움이 된다면 레포의 파일을 직접 읽어 도메인과 데이터 구조를 파악하세요.\n\n"
             f"## 담당 서비스\n"
-            f"- 이름: {session.service_name}\n"
-            f"- 설명: {session.service_description}\n\n"
+            f"- 이름: {service.name}\n"
+            f"- 설명: {service.description}\n\n"
             f"## 데이터베이스 실시간 스키마\n"
             f"{live_schema}\n\n"
             "## 행동 규약 (매우 중요)\n"
@@ -206,7 +202,7 @@ class ClaudeHandler:
     # ── Claude CLI invocation ─────────────────────────────────────────────────
 
     def _invoke_cli(
-        self, prompt: str, session_id: Optional[str]
+        self, prompt: str, session_id: Optional[str], cwd: str
     ) -> Tuple[str, Optional[str]]:
         """Call the Claude CLI in print mode. Returns (reply_text, session_id)."""
         cmd = ["claude", "-p", "--output-format", "json"]
@@ -221,7 +217,7 @@ class ClaudeHandler:
                 input=prompt,
                 capture_output=True,
                 text=True,
-                cwd=self._repo_path,
+                cwd=cwd,
                 timeout=_CLI_TIMEOUT,
             )
         except subprocess.TimeoutExpired:
@@ -264,12 +260,12 @@ class ClaudeHandler:
 
         return "ANSWER", stripped
 
-    def _run_query(self, sql: str) -> str:
+    def _run_query(self, db, sql: str) -> str:
         """Execute a SELECT query and build the next turn prompt."""
         if not sql:
             return self._query_error_prompt(sql, "SQL 쿼리가 비어 있습니다.")
         try:
-            rows = self._db.execute_select(sql)
+            rows = db.execute_select(sql)
             result_json = json.dumps(rows, ensure_ascii=False, default=str)
             if len(result_json) > _MAX_RESULT_CHARS:
                 result_json = (

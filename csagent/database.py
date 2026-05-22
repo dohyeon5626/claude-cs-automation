@@ -4,65 +4,63 @@ from typing import Any, Dict, List
 import mysql.connector
 from mysql.connector import Error as MySQLError
 
+from .config import DatabaseConfig
 
-class DatabaseHandler:
-    def __init__(self, host: str, port: int, database: str, user: str, password: str):
-        self._config = {
-            "host": host,
-            "port": port,
-            "database": database,
-            "user": user,
-            "password": password,
+
+class Database:
+    """A connection to one service's MySQL database (read-only use)."""
+
+    def __init__(self, config: DatabaseConfig):
+        self._params = {
+            "host": config.host,
+            "port": config.port,
+            "database": config.name,
+            "user": config.user,
+            "password": config.password,
             "charset": "utf8mb4",
             "use_unicode": True,
             "connection_timeout": 10,
         }
+        self._name = config.name
         self._test_connection()
 
     def _test_connection(self):
         try:
-            conn = mysql.connector.connect(**self._config)
+            conn = mysql.connector.connect(**self._params)
             conn.close()
         except MySQLError as e:
-            raise RuntimeError(
-                f"Database connection failed: {e}\n"
-                "  Check your config.yml [database] settings."
-            )
+            raise RuntimeError(f"데이터베이스 연결 실패: {e}")
 
     def execute_select(self, query: str) -> List[Dict[str, Any]]:
         """
-        Execute a SELECT query and return rows as list of dicts.
-        Rejects non-SELECT queries and adds LIMIT 100 if missing for safety.
+        Run a SELECT query and return rows as a list of dicts.
+        Rejects any non-SELECT query; appends LIMIT 100 when missing.
         """
         clean = query.strip()
 
         if not re.match(r"^\s*SELECT\b", clean, re.IGNORECASE):
             raise ValueError(
-                f"Security: only SELECT queries are permitted, got: {clean[:60]}..."
+                f"보안: SELECT 쿼리만 허용됩니다. 받은 쿼리: {clean[:60]}..."
             )
 
         if not re.search(r"\bLIMIT\b", clean, re.IGNORECASE):
             clean = clean.rstrip(";") + " LIMIT 100"
 
-        conn = mysql.connector.connect(**self._config)
+        conn = mysql.connector.connect(**self._params)
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(clean)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
         except MySQLError as e:
-            raise RuntimeError(f"Query execution failed: {e}")
+            raise RuntimeError(f"쿼리 실행 실패: {e}")
         finally:
             cursor.close()
             conn.close()
 
-    def get_schema_introspection(self) -> str:
-        """
-        Read the live table/column structure from INFORMATION_SCHEMA.
-        Returns a Markdown-formatted description for use as Claude's context.
-        """
-        db_name = self._config["database"]
-        conn = mysql.connector.connect(**self._config)
+    def get_schema(self) -> str:
+        """Read the live table/column structure from INFORMATION_SCHEMA."""
+        conn = mysql.connector.connect(**self._params)
         try:
             cursor = conn.cursor(dictionary=True)
 
@@ -70,7 +68,7 @@ class DatabaseHandler:
                 "SELECT TABLE_NAME, TABLE_COMMENT "
                 "FROM INFORMATION_SCHEMA.TABLES "
                 "WHERE TABLE_SCHEMA = %s",
-                (db_name,),
+                (self._name,),
             )
             table_comments = {
                 r["TABLE_NAME"]: (r["TABLE_COMMENT"] or "").strip()
@@ -83,11 +81,11 @@ class DatabaseHandler:
                 "FROM INFORMATION_SCHEMA.COLUMNS "
                 "WHERE TABLE_SCHEMA = %s "
                 "ORDER BY TABLE_NAME, ORDINAL_POSITION",
-                (db_name,),
+                (self._name,),
             )
             columns = cursor.fetchall()
         except MySQLError as e:
-            raise RuntimeError(f"Schema introspection failed: {e}")
+            raise RuntimeError(f"스키마 분석 실패: {e}")
         finally:
             cursor.close()
             conn.close()
@@ -114,7 +112,9 @@ class DatabaseHandler:
                     key = " [INDEX]"
                 nullable = "" if c["IS_NULLABLE"] == "YES" else " NOT NULL"
                 ccomment = (
-                    f"  -- {c['COLUMN_COMMENT']}" if (c["COLUMN_COMMENT"] or "").strip() else ""
+                    f"  -- {c['COLUMN_COMMENT']}"
+                    if (c["COLUMN_COMMENT"] or "").strip()
+                    else ""
                 )
                 lines.append(
                     f"- {c['COLUMN_NAME']}: {c['COLUMN_TYPE']}{key}{nullable}{ccomment}"

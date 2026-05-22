@@ -1,7 +1,7 @@
 import secrets
 from typing import Dict, List, Optional
 
-from config import ServiceConfig, UserConfig
+from .config import ServiceConfig, UserConfig
 
 
 class Authenticator:

@@ -14,8 +14,8 @@ venv/
 env/
 .env
 
-# Repo cloned by server
-cs-server/repo/
+# Service repositories cloned at runtime
+repos/
 
 # IDE
 .vscode/

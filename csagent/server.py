@@ -2,12 +2,13 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import Dict
 
 from aiohttp import WSMsgType, web
 
-from auth import Authenticator
-from claude_handler import ClaudeHandler, UserSession
-from config import AppConfig
+from .agent import ClaudeAgent, UserSession
+from .auth import Authenticator
+from .service import Service
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +18,15 @@ _WEB_DIR = Path(__file__).resolve().parent / "web"
 class WebServer:
     """aiohttp application: serves the web page, the REST API, and the WebSocket."""
 
-    def __init__(self, config: AppConfig, claude: ClaudeHandler, auth: Authenticator):
-        self._config = config
-        self._claude = claude
+    def __init__(
+        self,
+        agent: ClaudeAgent,
+        auth: Authenticator,
+        services: Dict[str, Service],
+    ):
+        self._agent = agent
         self._auth = auth
-        self._services = {s.id: s for s in config.services}
+        self._services = services
 
     def build_app(self) -> web.Application:
         app = web.Application()
@@ -107,12 +112,16 @@ class WebServer:
             return web.json_response({"error": "질문 내용이 비어 있습니다."}, status=400)
 
         session = UserSession(user_id=user.id)
-        session.set_service(service.id, service.name, service.description)
-
+        session.select_service(service_id)
         loop = asyncio.get_running_loop()
         try:
             answer = await loop.run_in_executor(
-                None, self._claude.process_query, session, message, lambda s: None
+                None,
+                self._agent.process_query,
+                session,
+                service,
+                message,
+                lambda s: None,
             )
         except Exception as e:
             logger.error(f"API query error: {e}", exc_info=True)
@@ -170,7 +179,7 @@ class WebServer:
                     if not service or not self._auth.can_access(user, service.id):
                         await ws.send_json({"type": "error", "message": "접근할 수 없는 서비스입니다."})
                         continue
-                    session.set_service(service.id, service.name, service.description)
+                    session.select_service(service.id)
                     await ws.send_json(
                         {
                             "type": "service_selected",
@@ -184,14 +193,15 @@ class WebServer:
                     if not user or not session:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
                         continue
-                    if not session.service_id:
+                    service = self._services.get(session.service_id or "")
+                    if not service:
                         await ws.send_json({"type": "error", "message": "먼저 서비스를 선택해 주세요."})
                         continue
                     message = str(data.get("message", "")).strip()
                     if not message:
                         await ws.send_json({"type": "error", "message": "질문 내용이 비어 있습니다."})
                         continue
-                    await self._process_query(ws, session, message, loop)
+                    await self._process_query(ws, session, service, message, loop)
 
                 else:
                     await ws.send_json({"type": "error", "message": f"알 수 없는 메시지: {mtype}"})
@@ -205,8 +215,8 @@ class WebServer:
 
         return ws
 
-    async def _process_query(self, ws, session: UserSession, message: str, loop):
-        logger.info(f"Query from {session.user_id}: {message[:80]}")
+    async def _process_query(self, ws, session, service, message, loop):
+        logger.info(f"Query from {session.user_id} ({service.id}): {message[:80]}")
 
         def status_callback(text: str):
             # Called from the executor thread; re-dispatch onto the event loop
@@ -217,7 +227,12 @@ class WebServer:
         try:
             await ws.send_json({"type": "status", "message": "요청을 분석하고 있습니다..."})
             answer = await loop.run_in_executor(
-                None, self._claude.process_query, session, message, status_callback
+                None,
+                self._agent.process_query,
+                session,
+                service,
+                message,
+                status_callback,
             )
             await ws.send_json({"type": "response", "message": answer})
         except Exception as e:

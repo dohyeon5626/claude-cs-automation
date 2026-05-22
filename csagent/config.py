@@ -1,0 +1,155 @@
+import os
+from dataclasses import dataclass, field
+from typing import List
+
+import yaml
+
+
+@dataclass
+class DatabaseConfig:
+    host: str
+    port: int
+    name: str
+    user: str
+    password: str
+
+
+@dataclass
+class GithubConfig:
+    url: str
+    branch: str
+
+
+@dataclass
+class ServiceConfig:
+    id: str
+    name: str
+    description: str
+    database: DatabaseConfig
+    github: GithubConfig
+
+    @property
+    def repo_path(self) -> str:
+        """Local directory where this service's repo is cloned."""
+        return os.path.abspath(os.path.join("repos", self.id))
+
+
+@dataclass
+class UserConfig:
+    id: str
+    password: str
+    name: str
+    services: List[str]  # allowed service ids, or ["*"] for all
+
+
+@dataclass
+class AppConfig:
+    host: str
+    port: int
+    claude_model: str
+    services: List[ServiceConfig] = field(default_factory=list)
+    users: List[UserConfig] = field(default_factory=list)
+
+
+def load_config(path: str = "config.yml") -> AppConfig:
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"설정 파일을 찾을 수 없습니다: {path}\n"
+            "config.yml 을 만들고 설정을 입력하세요."
+        )
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    _validate(raw)
+
+    services = [_parse_service(s) for s in raw["services"]]
+
+    users = []
+    for u in raw["users"]:
+        svc = u.get("services", [])
+        if isinstance(svc, str):
+            svc = [svc]
+        users.append(
+            UserConfig(
+                id=str(u["id"]),
+                password=str(u["password"]),
+                name=str(u.get("name", u["id"])),
+                services=[str(x) for x in svc],
+            )
+        )
+
+    claude_section = raw.get("claude") or {}
+
+    return AppConfig(
+        host=str(raw["server"]["host"]),
+        port=int(raw["server"]["port"]),
+        claude_model=str(claude_section.get("model", "") or ""),
+        services=services,
+        users=users,
+    )
+
+
+def _parse_service(s: dict) -> ServiceConfig:
+    db = s["database"]
+    gh = s["github"]
+    return ServiceConfig(
+        id=str(s["id"]),
+        name=str(s["name"]),
+        description=str(s.get("description", "")),
+        database=DatabaseConfig(
+            host=str(db["host"]),
+            port=int(db["port"]),
+            name=str(db["name"]),
+            user=str(db["user"]),
+            password=str(db["password"]),
+        ),
+        github=GithubConfig(url=str(gh["url"]), branch=str(gh["branch"])),
+    )
+
+
+def _validate(raw: dict):
+    if "server" not in raw:
+        raise ValueError("[server] 섹션이 없습니다.")
+    for key in ("host", "port"):
+        if key not in raw["server"]:
+            raise ValueError(f"[server].{key} 가 없습니다.")
+
+    if not raw.get("services"):
+        raise ValueError("[services] 섹션에 최소 1개의 서비스가 필요합니다.")
+    if not raw.get("users"):
+        raise ValueError("[users] 섹션에 최소 1명의 사용자가 필요합니다.")
+
+    service_ids = set()
+    for s in raw["services"]:
+        for key in ("id", "name", "database", "github"):
+            if key not in s:
+                raise ValueError(f"[services] 항목에 '{key}' 가 없습니다.")
+        sid = str(s["id"])
+        if sid in service_ids:
+            raise ValueError(f"서비스 id가 중복되었습니다: '{sid}'")
+        service_ids.add(sid)
+        for key in ("host", "port", "name", "user", "password"):
+            if key not in s["database"]:
+                raise ValueError(f"서비스 '{sid}'의 database에 '{key}' 가 없습니다.")
+        for key in ("url", "branch"):
+            if key not in s["github"]:
+                raise ValueError(f"서비스 '{sid}'의 github에 '{key}' 가 없습니다.")
+
+    user_ids = set()
+    for u in raw["users"]:
+        for key in ("id", "password"):
+            if key not in u:
+                raise ValueError(f"[users] 항목에 '{key}' 가 없습니다.")
+        uid = str(u["id"])
+        if uid in user_ids:
+            raise ValueError(f"사용자 id가 중복되었습니다: '{uid}'")
+        user_ids.add(uid)
+        svc = u.get("services", [])
+        if isinstance(svc, str):
+            svc = [svc]
+        for sid in svc:
+            if str(sid) != "*" and str(sid) not in service_ids:
+                raise ValueError(
+                    f"사용자 '{uid}'가 존재하지 않는 서비스 '{sid}'를 참조합니다."
+                )
