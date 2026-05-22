@@ -155,11 +155,6 @@ class MainWindow(QMainWindow):
             self._chat_page.set_status("")
             self._chat_page.append_bot_message(msg.get("message", ""))
 
-        elif t == "rejected":
-            self._chat_page.set_sending(False)
-            self._chat_page.set_status("")
-            self._chat_page.append_bot_message(msg.get("message", ""))
-
         elif t == "error":
             self._chat_page.set_sending(False)
             self._chat_page.set_status("")

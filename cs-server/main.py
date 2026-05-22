@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import sys
+from typing import Tuple
 
-from claude_handler import ClaudeHandler
+from claude_handler import ClaudeHandler, check_claude_cli
 from config import load_config
 from db_handler import DatabaseHandler
-from git_handler import check_git_config, get_schema_context, sync_repo
+from git_handler import check_git_config, sync_repo
 from ws_server import CSWebSocketServer
 
 logging.basicConfig(
@@ -16,11 +17,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def startup_checks(config) -> str:
+def _fail(message: str):
+    print("FAIL")
+    print(f"\n오류: {message}")
+    sys.exit(1)
+
+
+def startup_checks(config) -> DatabaseHandler:
     """
     Run all startup validations in order.
-    Returns the schema context string on success.
-    Exits the process on any failure.
+    Returns the DatabaseHandler on success. Exits the process on any failure.
     """
 
     print("=" * 60)
@@ -28,34 +34,30 @@ def startup_checks(config) -> str:
     print("=" * 60)
 
     # 1. Git config
-    print("\n[1/3] Git 설정 확인...", end=" ", flush=True)
+    print("\n[1/5] Git 설정 확인...", end=" ", flush=True)
     try:
         check_git_config()
         print("OK")
     except RuntimeError as e:
-        print("FAIL")
-        print(f"\n오류: {e}")
-        sys.exit(1)
+        _fail(str(e))
 
-    # 2. GitHub repo sync
-    print("[2/3] GitHub 레포 동기화...", end=" ", flush=True)
+    # 2. GitHub repo sync (clone or pull)
+    print("[2/5] GitHub 레포 동기화...", end=" ", flush=True)
     try:
         sync_repo(
             config.github_repo_url,
             config.github_branch,
             config.github_local_path,
         )
-        schema_context = get_schema_context(config.github_local_path)
         print("OK")
     except RuntimeError as e:
-        print("FAIL")
-        print(f"\n오류: {e}")
-        sys.exit(1)
+        _fail(str(e))
 
     # 3. Database connection
-    print("[3/3] 데이터베이스 연결 확인...", end=" ", flush=True)
+    print("[3/5] 데이터베이스 연결 확인...", end=" ", flush=True)
+    db = None
     try:
-        DatabaseHandler(
+        db = DatabaseHandler(
             host=config.db_host,
             port=config.db_port,
             database=config.db_name,
@@ -64,12 +66,26 @@ def startup_checks(config) -> str:
         )
         print("OK")
     except RuntimeError as e:
-        print("FAIL")
-        print(f"\n오류: {e}")
-        sys.exit(1)
+        _fail(str(e))
+
+    # 4. Live schema introspection
+    print("[4/5] 데이터베이스 스키마 분석...", end=" ", flush=True)
+    try:
+        db.get_schema_introspection()
+        print("OK")
+    except RuntimeError as e:
+        _fail(str(e))
+
+    # 5. Claude CLI availability & authentication
+    print("[5/5] Claude CLI 확인...", end=" ", flush=True)
+    try:
+        check_claude_cli(config.claude_model)
+        print("OK")
+    except RuntimeError as e:
+        _fail(str(e))
 
     print("\n모든 검증 통과. 서버를 시작합니다.\n")
-    return schema_context
+    return db
 
 
 def main():
@@ -79,23 +95,16 @@ def main():
         print(f"설정 오류: {e}")
         sys.exit(1)
 
-    schema_context = startup_checks(config)
-
-    db = DatabaseHandler(
-        host=config.db_host,
-        port=config.db_port,
-        database=config.db_name,
-        user=config.db_user,
-        password=config.db_password,
-    )
+    db = startup_checks(config)
 
     claude = ClaudeHandler(
-        api_key=config.claude_api_key,
         model=config.claude_model,
-        schema_context=schema_context,
+        db_handler=db,
+        github_branch=config.github_branch,
+        repo_local_path=config.github_local_path,
     )
 
-    server = CSWebSocketServer(config=config, db=db, claude=claude)
+    server = CSWebSocketServer(config=config, claude=claude)
 
     try:
         asyncio.run(server.start())

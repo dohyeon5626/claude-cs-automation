@@ -55,3 +55,70 @@ class DatabaseHandler:
         finally:
             cursor.close()
             conn.close()
+
+    def get_schema_introspection(self) -> str:
+        """
+        Read the live table/column structure from INFORMATION_SCHEMA.
+        Returns a Markdown-formatted description for use as Claude's context.
+        """
+        db_name = self._config["database"]
+        conn = mysql.connector.connect(**self._config)
+        try:
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute(
+                "SELECT TABLE_NAME, TABLE_COMMENT "
+                "FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_SCHEMA = %s",
+                (db_name,),
+            )
+            table_comments = {
+                r["TABLE_NAME"]: (r["TABLE_COMMENT"] or "").strip()
+                for r in cursor.fetchall()
+            }
+
+            cursor.execute(
+                "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, "
+                "COLUMN_KEY, COLUMN_COMMENT "
+                "FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = %s "
+                "ORDER BY TABLE_NAME, ORDINAL_POSITION",
+                (db_name,),
+            )
+            columns = cursor.fetchall()
+        except MySQLError as e:
+            raise RuntimeError(f"Schema introspection failed: {e}")
+        finally:
+            cursor.close()
+            conn.close()
+
+        tables: Dict[str, List[Dict[str, Any]]] = {}
+        for col in columns:
+            tables.setdefault(col["TABLE_NAME"], []).append(col)
+
+        if not tables:
+            return "데이터베이스에 테이블이 없습니다."
+
+        parts = []
+        for table_name, cols in tables.items():
+            comment = table_comments.get(table_name, "")
+            header = f"### {table_name}"
+            if comment:
+                header += f"  -- {comment}"
+            lines = [header]
+            for c in cols:
+                key = ""
+                if c["COLUMN_KEY"] == "PRI":
+                    key = " [PK]"
+                elif c["COLUMN_KEY"] == "MUL":
+                    key = " [INDEX]"
+                nullable = "" if c["IS_NULLABLE"] == "YES" else " NOT NULL"
+                ccomment = (
+                    f"  -- {c['COLUMN_COMMENT']}" if (c["COLUMN_COMMENT"] or "").strip() else ""
+                )
+                lines.append(
+                    f"- {c['COLUMN_NAME']}: {c['COLUMN_TYPE']}{key}{nullable}{ccomment}"
+                )
+            parts.append("\n".join(lines))
+
+        return f"테이블 {len(tables)}개\n\n" + "\n\n".join(parts)

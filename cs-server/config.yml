@@ -15,8 +15,10 @@ github:
   local_path: "./repo"
 
 claude:
-  api_key: "your-anthropic-api-key"
-  model: "claude-sonnet-4-6"
+  # 개발자 PC에 설치된 Claude CLI(Claude Code)를 사용합니다.
+  # model은 CLI에 전달할 모델 별칭 또는 ID입니다. (예: sonnet, opus, claude-sonnet-4-6)
+  # 비워두면 CLI 기본 모델을 사용합니다.
+  model: "sonnet"
 
 services:
   - id: "order_inquiry"

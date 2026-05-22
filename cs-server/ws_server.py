@@ -8,19 +8,18 @@ from websockets.server import WebSocketServerProtocol
 
 from claude_handler import ClaudeHandler, UserSession
 from config import AppConfig, ServiceConfig
-from db_handler import DatabaseHandler
 
 logger = logging.getLogger(__name__)
 
 
-def _send(ws: WebSocketServerProtocol, data: dict) -> asyncio.coroutines:
+def _send(ws: WebSocketServerProtocol, data: dict):
+    """Returns a coroutine that sends a JSON message."""
     return ws.send(json.dumps(data, ensure_ascii=False))
 
 
 class CSWebSocketServer:
-    def __init__(self, config: AppConfig, db: DatabaseHandler, claude: ClaudeHandler):
+    def __init__(self, config: AppConfig, claude: ClaudeHandler):
         self._config = config
-        self._db = db
         self._claude = claude
         self._sessions: Dict[WebSocketServerProtocol, UserSession] = {}
         self._service_map: Dict[str, ServiceConfig] = {
@@ -124,46 +123,33 @@ class CSWebSocketServer:
 
         logger.info(f"Query from {session.user_id}: {user_query[:80]}")
 
-        # Run blocking Claude + DB calls in a thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+
+        def status_callback(text: str):
+            # Called from the executor thread; re-dispatch onto the event loop
+            asyncio.run_coroutine_threadsafe(
+                _send(ws, {"type": "status", "message": text}), loop
+            )
+
         try:
             await _send(ws, {"type": "status", "message": "요청을 분석하고 있습니다..."})
 
-            is_valid, sql_or_reason = await asyncio.get_event_loop().run_in_executor(
-                None, self._claude.generate_sql, session, user_query
+            final_answer = await loop.run_in_executor(
+                None,
+                self._claude.process_query,
+                session,
+                user_query,
+                status_callback,
             )
 
-            if not is_valid:
-                await _send(
-                    ws,
-                    {
-                        "type": "rejected",
-                        "message": f"## 처리 불가\n\n{sql_or_reason}",
-                    },
-                )
-                return
+            await _send(ws, {"type": "response", "message": final_answer})
 
-            await _send(ws, {"type": "status", "message": "데이터베이스에서 조회 중입니다..."})
-
-            rows = await asyncio.get_event_loop().run_in_executor(
-                None, self._db.execute_select, sql_or_reason
-            )
-
-            await _send(ws, {"type": "status", "message": "결과를 정리하고 있습니다..."})
-
-            formatted = await asyncio.get_event_loop().run_in_executor(
-                None, self._claude.format_results, user_query, sql_or_reason, rows
-            )
-
-            await _send(ws, {"type": "response", "message": formatted})
-
-        except ValueError as e:
-            # SQL safety check failed
-            await _send(ws, {"type": "error", "message": f"보안 오류: {e}"})
-        except RuntimeError as e:
-            await _send(ws, {"type": "error", "message": f"처리 중 오류가 발생했습니다: {e}"})
         except Exception as e:
-            logger.error(f"Unexpected error handling query: {e}", exc_info=True)
-            await _send(ws, {"type": "error", "message": "예기치 않은 오류가 발생했습니다."})
+            logger.error(f"Error handling query: {e}", exc_info=True)
+            await _send(
+                ws,
+                {"type": "error", "message": f"처리 중 오류가 발생했습니다: {e}"},
+            )
 
     async def start(self):
         host = self._config.server_host

@@ -23,7 +23,6 @@ class AppConfig:
     github_repo_url: str
     github_branch: str
     github_local_path: str
-    claude_api_key: str
     claude_model: str
     services: List[ServiceConfig] = field(default_factory=list)
 
@@ -32,7 +31,7 @@ def load_config(path: str = "config.yml") -> AppConfig:
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Config file not found: {path}\n"
-            "Copy config.yml.example to config.yml and fill in your settings."
+            "Edit config.yml to fill in your settings."
         )
 
     with open(path, "r", encoding="utf-8") as f:
@@ -45,9 +44,10 @@ def load_config(path: str = "config.yml") -> AppConfig:
         for s in raw.get("services", [])
     ]
 
-    # Environment variables take priority over YAML values for secrets
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or raw["claude"]["api_key"]
+    # Environment variable takes priority over YAML for the DB password
     db_password = os.environ.get("DB_PASSWORD") or raw["database"]["password"]
+
+    claude_section = raw.get("claude") or {}
 
     return AppConfig(
         server_host=raw["server"]["host"],
@@ -60,8 +60,7 @@ def load_config(path: str = "config.yml") -> AppConfig:
         github_repo_url=raw["github"]["repo_url"],
         github_branch=raw["github"]["branch"],
         github_local_path=raw["github"]["local_path"],
-        claude_api_key=api_key,
-        claude_model=raw["claude"]["model"],
+        claude_model=str(claude_section.get("model", "") or ""),
         services=services,
     )
 
@@ -71,7 +70,6 @@ def _validate_required_keys(raw: dict):
         "server": ["host", "port"],
         "database": ["host", "port", "name", "user", "password"],
         "github": ["repo_url", "branch", "local_path"],
-        "claude": ["api_key", "model"],
     }
     for section, keys in required.items():
         if section not in raw:
