@@ -1,0 +1,33 @@
+server:
+  host: "0.0.0.0"
+  port: 8765
+
+database:
+  host: "localhost"
+  port: 3306
+  name: "your_database_name"
+  user: "your_db_user"
+  password: "your_db_password"
+
+github:
+  repo_url: "https://github.com/yourorg/yourrepo"
+  branch: "main"
+  local_path: "./repo"
+
+claude:
+  api_key: "your-anthropic-api-key"
+  model: "claude-sonnet-4-6"
+
+services:
+  - id: "order_inquiry"
+    name: "주문 조회"
+    description: "고객 주문 관련 정보를 조회합니다 (주문 상태, 주문 내역 등)"
+  - id: "customer_info"
+    name: "고객 정보 조회"
+    description: "고객 기본 정보를 조회합니다 (회원 정보, 가입일 등)"
+  - id: "delivery_check"
+    name: "배송 조회"
+    description: "배송 현황 및 배송 정보를 조회합니다"
+  - id: "refund_check"
+    name: "환불 조회"
+    description: "환불 요청 및 처리 상태를 조회합니다"
