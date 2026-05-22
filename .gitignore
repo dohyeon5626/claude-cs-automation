@@ -17,9 +17,6 @@ env/
 # Repo cloned by server
 cs-server/repo/
 
-# Local settings
-cs-desktop/settings.json
-
 # IDE
 .vscode/
 .idea/

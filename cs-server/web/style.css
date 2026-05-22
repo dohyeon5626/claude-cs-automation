@@ -1,0 +1,291 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --primary: #5667ff;
+  --primary-hover: #4553e0;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --text: #1f2430;
+  --text-secondary: #8a90a0;
+  --border: #e6e8ec;
+  --danger: #d83a3f;
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.view { height: 100vh; }
+.hidden { display: none !important; }
+
+/* ── 공통 컴포넌트 ─────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid #ececf0;
+  border-radius: 18px;
+  box-shadow: 0 12px 44px rgba(20, 23, 40, 0.12);
+}
+
+.logo {
+  width: 60px; height: 60px;
+  border-radius: 16px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 22px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+}
+
+input, textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+  transition: border-color 0.12s;
+}
+input:focus, textarea:focus { border-color: var(--primary); }
+input:disabled, textarea:disabled { background: #f1f2f5; color: #a8adba; }
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-size: 14px; font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:disabled { background: #c2c6d6; cursor: default; }
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  font-size: 13px; font-weight: 500;
+  font-family: inherit;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.btn-ghost:hover { background: #ebedf1; color: var(--text); }
+
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 12px;
+  min-height: 18px;
+}
+
+/* ── 로그인 화면 ───────────────────────────────────────────────── */
+#login-view { display: flex; align-items: center; justify-content: center; padding: 24px; }
+
+.login-card { width: 380px; max-width: 100%; padding: 40px; text-align: center; }
+.login-card h1 { font-size: 22px; font-weight: 600; }
+.login-card .subtitle {
+  font-size: 13px; color: var(--text-secondary);
+  margin-top: 6px; margin-bottom: 28px;
+}
+.login-card form { text-align: left; }
+.login-card label {
+  display: block;
+  font-size: 12px; font-weight: 600;
+  color: #6b7280;
+  margin-top: 16px; margin-bottom: 6px;
+}
+.login-card .btn-primary { width: 100%; margin-top: 24px; }
+
+/* ── 상단 바 (서비스 선택 화면) ───────────────────────────────── */
+.topbar {
+  height: 64px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+}
+.topbar-title { font-size: 18px; font-weight: 600; }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.user-chip { font-size: 13px; color: #6b7280; }
+
+/* ── 서비스 목록 ───────────────────────────────────────────────── */
+.service-wrap {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+.hint { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+.service-list { display: flex; flex-direction: column; gap: 12px; }
+
+.service-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 14px;
+  box-shadow: 0 2px 8px rgba(20, 23, 40, 0.04);
+  transition: border-color 0.12s, background 0.12s, transform 0.06s;
+}
+.service-card:hover { border-color: var(--primary); background: #fafbff; }
+.service-card:active { transform: scale(0.995); }
+.service-card-text { flex: 1; }
+.service-card-name { font-size: 15px; font-weight: 600; }
+.service-card-desc {
+  font-size: 12.5px; color: var(--text-secondary); margin-top: 3px;
+}
+.service-card-arrow { font-size: 22px; color: #c2c6d6; }
+
+/* ── 채팅 화면 ─────────────────────────────────────────────────── */
+#chat-view { display: flex; flex-direction: column; }
+
+.chat-header {
+  height: 64px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px 0 20px;
+  flex-shrink: 0;
+}
+.mini-logo {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.chat-titles { flex: 1; min-width: 0; }
+.chat-service {
+  font-size: 15px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-sub { font-size: 12px; color: var(--text-secondary); }
+.chat-actions { display: flex; gap: 4px; }
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+.msg-row { display: flex; }
+.msg-row.user { justify-content: flex-end; }
+.msg-row.bot { justify-content: flex-start; }
+
+.bubble {
+  padding: 12px 15px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+.bubble.user {
+  background: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 5px;
+  max-width: 75%;
+  white-space: pre-wrap;
+}
+.bubble.bot {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 5px;
+  max-width: 82%;
+}
+.bubble.error {
+  background: #fdeeee;
+  border: 1px solid #f3c9c9;
+  color: var(--danger);
+  font-size: 13px;
+  max-width: 82%;
+}
+
+/* 봇 메시지 내부 마크다운 */
+.bubble.bot h1, .bubble.bot h2, .bubble.bot h3 {
+  font-size: 15px; font-weight: 600; margin: 10px 0 5px;
+}
+.bubble.bot h1 { font-size: 16px; }
+.bubble.bot h1:first-child, .bubble.bot h2:first-child,
+.bubble.bot h3:first-child, .bubble.bot p:first-child { margin-top: 0; }
+.bubble.bot p { margin: 5px 0; }
+.bubble.bot ul, .bubble.bot ol { margin: 5px 0 5px 20px; }
+.bubble.bot li { margin: 2px 0; }
+.bubble.bot table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+  font-size: 13px;
+}
+.bubble.bot th, .bubble.bot td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.bubble.bot th { background: var(--bg); font-weight: 600; }
+.bubble.bot code {
+  background: #f1f2f5;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+.bubble.bot pre {
+  background: #f1f2f5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.bubble.bot pre code { background: none; padding: 0; }
+.bubble.bot a { color: var(--primary); }
+
+.status-line {
+  text-align: center;
+  font-size: 12px;
+  color: #9aa0ad;
+  padding: 6px;
+  flex-shrink: 0;
+}
+
+.input-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 14px 16px;
+  display: flex; gap: 10px; align-items: flex-end;
+  flex-shrink: 0;
+}
+.input-bar textarea {
+  resize: none;
+  max-height: 140px;
+  line-height: 1.5;
+  border-radius: 12px;
+  overflow-y: auto;
+}
+.send-btn { width: 80px; height: 44px; flex-shrink: 0; }
+
+/* ── 좁은 화면 대응 ────────────────────────────────────────────── */
+@media (max-width: 520px) {
+  .login-card { padding: 28px; }
+  .service-wrap { padding: 20px 16px; }
+  .topbar, .chat-header { padding-left: 16px; padding-right: 12px; }
+  .bubble.user, .bubble.bot, .bubble.error { max-width: 90%; }
+}

@@ -1,13 +1,14 @@
-import asyncio
 import logging
 import sys
-from typing import Tuple
 
+from aiohttp import web
+
+from auth import Authenticator
 from claude_handler import ClaudeHandler, check_claude_cli
 from config import load_config
 from db_handler import DatabaseHandler
 from git_handler import check_git_config, sync_repo
-from ws_server import CSWebSocketServer
+from web_server import WebServer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,19 +98,28 @@ def main():
 
     db = startup_checks(config)
 
+    auth = Authenticator(config.users, config.services)
     claude = ClaudeHandler(
         model=config.claude_model,
         db_handler=db,
         github_branch=config.github_branch,
         repo_local_path=config.github_local_path,
     )
+    server = WebServer(config=config, claude=claude, auth=auth)
 
-    server = CSWebSocketServer(config=config, claude=claude)
+    port = config.server_port
+    print("CS 담당자는 웹 브라우저에서 아래 주소로 접속하세요:")
+    print(f"  - 이 PC에서:     http://localhost:{port}")
+    print(f"  - 같은 네트워크: http://<이 PC의 IP주소>:{port}")
+    print(f"\n사용자 {len(config.users)}명 · 서비스 {len(config.services)}개 로드됨.")
+    print("종료하려면 Ctrl+C 를 누르세요.\n")
 
-    try:
-        asyncio.run(server.start())
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user.")
+    web.run_app(
+        server.build_app(),
+        host=config.server_host,
+        port=port,
+        print=lambda *args: None,
+    )
 
 
 if __name__ == "__main__":

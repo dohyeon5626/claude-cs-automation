@@ -20,6 +20,7 @@ claude:
   # 비워두면 CLI 기본 모델을 사용합니다.
   model: "sonnet"
 
+# CS 담당자가 선택할 수 있는 서비스 목록
 services:
   - id: "order_inquiry"
     name: "주문 조회"
@@ -33,3 +34,21 @@ services:
   - id: "refund_check"
     name: "환불 조회"
     description: "환불 요청 및 처리 상태를 조회합니다"
+
+# 웹 페이지에 로그인할 수 있는 사용자 목록
+#   id / password : 로그인 계정
+#   name          : 화면에 표시할 이름
+#   services      : 접근 가능한 서비스 id 목록. ["*"] 이면 모든 서비스 접근 가능
+users:
+  - id: "admin"
+    password: "changeme"
+    name: "관리자"
+    services: ["*"]
+  - id: "cs001"
+    password: "changeme"
+    name: "김상담"
+    services: ["order_inquiry", "delivery_check"]
+  - id: "cs002"
+    password: "changeme"
+    name: "이상담"
+    services: ["customer_info", "refund_check"]
