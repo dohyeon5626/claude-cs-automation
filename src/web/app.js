@@ -190,7 +190,16 @@
   }
 
   // ── Chat rendering ───────────────────────────────────────────────────────
-  function clearMessages() { $("messages").innerHTML = ""; }
+  function clearMessages() {
+    // Wipe message bubbles but keep the empty-state placeholder around
+    const messages = $("messages");
+    const empty = $("empty-state");
+    Array.from(messages.children).forEach((child) => {
+      if (child !== empty) child.remove();
+    });
+  }
+  function showEmptyState() { $("empty-state").classList.remove("hidden"); }
+  function hideEmptyState() { $("empty-state").classList.add("hidden"); }
   function scrollMessages() {
     const m = $("messages");
     m.scrollTop = m.scrollHeight;
@@ -295,31 +304,36 @@
     return div;
   }
 
-  function setChatHeaderIcon(serviceId, serviceName) {
-    const el = $("chat-service-icon");
-    if (!serviceId) {
-      el.className = "hidden";
-      el.replaceChildren();
+  function setChatHeader(service) {
+    // service: null OR {id, name, description, logo_url}
+    const iconEl = $("chat-service-icon");
+    const nameEl = $("chat-service");
+    const descEl = $("chat-description");
+
+    iconEl.replaceChildren();
+    if (!service) {
+      iconEl.className = "hidden";
+      nameEl.textContent = "서비스를 선택해 주세요";
+      descEl.textContent = "";
       return;
     }
-    const svc = state.services.find((s) => s.id === serviceId)
-              || { id: serviceId, name: serviceName, logo_url: "" };
-    el.replaceChildren();
 
-    if (svc.logo_url) {
-      el.className = "w-8 h-8 rounded-lg overflow-hidden shrink-0";
+    if (service.logo_url) {
+      iconEl.className = "w-8 h-8 rounded-lg overflow-hidden shrink-0";
       const img = document.createElement("img");
-      img.src = svc.logo_url;
+      img.src = service.logo_url;
       img.alt = "";
       img.className = "w-full h-full object-cover";
-      el.appendChild(img);
+      iconEl.appendChild(img);
     } else {
-      const [bg, text] = iconClassesFor(serviceId);
-      el.className =
+      const [bg, text] = iconClassesFor(service.id);
+      iconEl.className =
         `w-8 h-8 rounded-lg ${bg} ${text} ` +
         "flex items-center justify-center font-semibold text-sm shrink-0";
-      el.textContent = initialOf(serviceName);
+      iconEl.textContent = initialOf(service.name);
     }
+    nameEl.textContent = service.name;
+    descEl.textContent = service.description || "";
   }
 
   // ── Service sidebar ──────────────────────────────────────────────────────
@@ -338,11 +352,23 @@
 
       btn.appendChild(makeServiceIcon(svc, "w-8 h-8"));
 
-      const label = document.createElement("span");
-      label.className = "text-sm truncate";
-      label.textContent = svc.name;
+      const textBox = document.createElement("div");
+      textBox.className = "flex-1 min-w-0 text-left";
 
-      btn.appendChild(label);
+      const name = document.createElement("div");
+      name.dataset.role = "name";
+      name.className = "text-sm truncate text-slate-700";
+      name.textContent = svc.name;
+
+      const desc = document.createElement("div");
+      desc.dataset.role = "description";
+      desc.className = "text-xs text-slate-400 truncate";
+      desc.textContent = svc.description || "";
+
+      textBox.appendChild(name);
+      if (svc.description) textBox.appendChild(desc);
+
+      btn.appendChild(textBox);
       btn.addEventListener("click", () => selectService(svc.id));
       list.appendChild(btn);
     });
@@ -352,15 +378,15 @@
   function updateServiceHighlight() {
     document.querySelectorAll("#service-list button").forEach((b) => {
       const active = state.currentService && b.dataset.serviceId === state.currentService.id;
-      const label = b.querySelector("span");
+      const name = b.querySelector('[data-role="name"]');
       if (active) {
         b.className =
-          "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-slate-100 transition";
-        label.className = "text-sm font-semibold text-slate-900 truncate";
+          "w-full flex items-center gap-2.5 px-2 py-2 rounded-lg bg-slate-100 transition";
+        if (name) name.className = "text-sm font-semibold text-slate-900 truncate";
       } else {
         b.className =
-          "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 transition";
-        label.className = "text-sm text-slate-700 truncate";
+          "w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-50 transition";
+        if (name) name.className = "text-sm text-slate-700 truncate";
       }
     });
   }
@@ -408,22 +434,21 @@
         $("login-id").focus();
         break;
 
-      case "service_selected":
-        state.currentService = { id: msg.service_id, name: msg.service_name };
-        localStorage.setItem(STORE.lastService, msg.service_id);
-        $("chat-service").textContent = msg.service_name;
-        setChatHeaderIcon(msg.service_id, msg.service_name);
+      case "service_selected": {
+        const svc = state.services.find((s) => s.id === msg.service_id)
+                 || { id: msg.service_id, name: msg.service_name, description: "", logo_url: "" };
+        state.currentService = { id: svc.id, name: svc.name };
+        localStorage.setItem(STORE.lastService, svc.id);
+        setChatHeader(svc);
         updateServiceHighlight();
         clearMessages();
+        showEmptyState();
         hideTypingBubble();
         setStatus("");
         setSending(false);
-        addBotMessage(
-          "**" + msg.service_name + "** 서비스에 연결되었습니다.\n\n" +
-          "조회할 내용을 자연어로 입력해 주세요. 코드와 데이터를 분석해 답변해 드립니다."
-        );
         $("chat-input").focus();
         break;
+      }
 
       case "status":
         setStatus(msg.message || "");
@@ -546,6 +571,7 @@
 
     input.value = "";
     autoGrow(input);
+    hideEmptyState();
     addUserMessage(text);
     showTypingBubble();
     setSending(true);
@@ -570,8 +596,8 @@
     clearMessages();
     setStatus("");
     state.currentService = null;
-    $("chat-service").textContent = "서비스를 선택하세요";
-    setChatHeaderIcon(null);
+    setChatHeader(null);
+    hideEmptyState();
     updateInputAvailable();
     showView("app");
   }

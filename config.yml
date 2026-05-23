@@ -6,7 +6,7 @@ server:
   port: 8765             # 웹 접속 포트 (같은 WiFi의 다른 PC에서 이 포트로 접속)
 
 brand:
-  name: "CS Automation"  # 사이드바/로그인에 표시될 이름
+  name: "CS 사이트"  # 사이드바/로그인에 표시될 이름
   logo: "https://avatars.githubusercontent.com/u/67463759?v=4"               # 이미지 URL("https://...") 또는 로컬 경로("./assets/logo.png")
                          # 비우면 brand.name 의 첫 글자가 그라데이션 사각형 안에 표시됩니다.
 
