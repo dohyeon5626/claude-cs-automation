@@ -81,6 +81,17 @@ users:
 ```
 brand, 서비스별 logo, 사용자별 services 권한 등 세부 옵션은 `config.yml` 의 주석에 정리되어 있습니다.
 
+### 실행
+가상환경(venv) 안에서 실행하는 걸 권장합니다.
+```
+- python -m venv .venv                  # 최초 1회
+- source .venv/bin/activate             # 매번 (macOS/Linux)
+- .venv\Scripts\Activate.ps1            # 매번 (Windows PowerShell)
+- pip install -r requirements.txt       # 최초 1회
+- python run.py                         # 서버 시작
+```
+시작 검증(Git 설정 · Claude CLI · 서비스별 GitHub 레포·DB)을 통과하면 콘솔에 접속 주소가 출력됩니다. 종료는 Ctrl+C.
+
 ### CS 담당자 접속
 서버와 **같은 WiFi** 에 있는 PC라면 누구나 브라우저로 접속할 수 있습니다.<br/>
 운영자가 서버 콘솔에 표시되는 주소를 동료에게 알려주기만 하면 됩니다.
