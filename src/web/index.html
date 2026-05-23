@@ -52,9 +52,9 @@
         <div id="service-list" class="space-y-0.5"></div>
       </div>
 
-      <div class="border-t border-slate-200 px-4 py-3 shrink-0">
+      <div class="h-[65px] border-t border-slate-200 px-4 shrink-0 flex flex-col justify-center">
         <div id="user-name" class="text-sm font-medium text-slate-900 truncate"></div>
-        <button id="logout-btn" class="mt-0.5 text-xs text-slate-500 hover:text-slate-900 transition">로그아웃</button>
+        <button id="logout-btn" class="mt-0.5 text-xs text-slate-500 hover:text-slate-900 transition self-start">로그아웃</button>
       </div>
     </aside>
 
@@ -67,22 +67,20 @@
 
       <div id="messages" class="flex-1 overflow-y-auto p-6 flex flex-col gap-3"></div>
 
-      <div id="status-line" class="text-xs text-slate-400 text-center py-1 shrink-0 hidden truncate"></div>
+      <div id="status-line" class="h-6 leading-6 text-xs text-slate-400 text-center shrink-0 truncate opacity-0 transition-opacity"></div>
 
-      <div class="bg-white border-t border-slate-200 px-4 py-3 shrink-0">
-        <div class="flex gap-2 items-end">
-          <textarea id="chat-input" rows="1"
-                    placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"
-                    class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 resize-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none disabled:opacity-50 transition"></textarea>
-          <button id="send-btn" aria-label="전송"
-                  class="w-10 h-10 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg flex items-center justify-center shrink-0 transition shadow-sm">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                 stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
-              <path d="M12 19V5"/>
-              <path d="M5 12l7-7 7 7"/>
-            </svg>
-          </button>
-        </div>
+      <div class="bg-white border-t border-slate-200 px-4 py-3 shrink-0 flex items-end gap-2">
+        <textarea id="chat-input" rows="1"
+                  placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"
+                  class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 resize-none max-h-32 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none disabled:opacity-50 transition"></textarea>
+        <button id="send-btn" aria-label="전송"
+                class="w-10 h-10 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg flex items-center justify-center shrink-0 transition shadow-sm hover:shadow-md">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <path d="M12 19V5"/>
+            <path d="M5 12l7-7 7 7"/>
+          </svg>
+        </button>
       </div>
     </main>
 

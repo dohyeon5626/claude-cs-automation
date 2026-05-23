@@ -253,8 +253,8 @@
 
   function setStatus(text) {
     const s = $("status-line");
-    if (text) { s.textContent = text; s.classList.remove("hidden"); }
-    else      { s.textContent = "";   s.classList.add("hidden"); }
+    s.textContent = text || "";
+    s.style.opacity = text ? "1" : "0";
   }
 
   function setSending(sending) {
