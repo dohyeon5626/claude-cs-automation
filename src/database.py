@@ -6,6 +6,11 @@ from mysql.connector import Error as MySQLError
 
 from .config import DatabaseConfig
 
+# Cost-control caps for runaway queries
+_DEFAULT_LIMIT = 100        # auto-appended when a query has no LIMIT
+_MAX_LIMIT = 1000           # hard cap on any LIMIT value
+_QUERY_TIMEOUT_MS = 30_000  # 30s per-statement timeout (MySQL 5.7.8+)
+
 
 class Database:
     """A connection to one service's MySQL database (read-only use)."""
@@ -34,7 +39,8 @@ class Database:
     def execute_select(self, query: str) -> List[Dict[str, Any]]:
         """
         Run a SELECT query and return rows as a list of dicts.
-        Rejects any non-SELECT query; appends LIMIT 100 when missing.
+        Rejects any non-SELECT query, caps LIMIT at _MAX_LIMIT,
+        and enforces a per-statement timeout.
         """
         clean = query.strip()
 
@@ -43,17 +49,20 @@ class Database:
                 f"보안: SELECT 쿼리만 허용됩니다. 받은 쿼리: {clean[:60]}..."
             )
 
-        if not re.search(r"\bLIMIT\b", clean, re.IGNORECASE):
-            clean = clean.rstrip(";") + " LIMIT 100"
+        clean = _cap_limit(clean)
 
         conn = mysql.connector.connect(**self._params)
         try:
             cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(f"SET SESSION MAX_EXECUTION_TIME = {_QUERY_TIMEOUT_MS}")
+            except MySQLError:
+                pass  # MySQL < 5.7.8 or non-MySQL — silently fall back
             cursor.execute(clean)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
         except MySQLError as e:
-            raise RuntimeError(f"쿼리 실행 실패: {e}")
+            raise RuntimeError(_format_query_error(e))
         finally:
             cursor.close()
             conn.close()
@@ -122,3 +131,41 @@ class Database:
             parts.append("\n".join(lines))
 
         return f"테이블 {len(tables)}개\n\n" + "\n\n".join(parts)
+
+
+# ── Query-cost helpers ─────────────────────────────────────────────────────
+
+_LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
+
+
+def _cap_limit(sql: str) -> str:
+    """
+    Ensure the query has a LIMIT no greater than _MAX_LIMIT.
+      - No LIMIT at all       → append "LIMIT _DEFAULT_LIMIT"
+      - LIMIT N               → if N > _MAX_LIMIT, rewrite to _MAX_LIMIT
+      - LIMIT offset, count   → if count > _MAX_LIMIT, rewrite count to _MAX_LIMIT
+    """
+    m = _LIMIT_RE.search(sql)
+    if not m:
+        return sql.rstrip(";") + f" LIMIT {_DEFAULT_LIMIT}"
+
+    if m.group(2) is not None:
+        offset, count = int(m.group(1)), int(m.group(2))
+        if count > _MAX_LIMIT:
+            return _LIMIT_RE.sub(f"LIMIT {offset}, {_MAX_LIMIT}", sql, count=1)
+    else:
+        n = int(m.group(1))
+        if n > _MAX_LIMIT:
+            return _LIMIT_RE.sub(f"LIMIT {_MAX_LIMIT}", sql, count=1)
+
+    return sql
+
+
+def _format_query_error(e: MySQLError) -> str:
+    msg = str(e).lower()
+    if "max_execution_time" in msg or "interrupted" in msg or "exceeded" in msg:
+        return (
+            f"쿼리가 {_QUERY_TIMEOUT_MS // 1000}초를 초과해 중단되었습니다. "
+            f"조건을 더 좁히거나 쿼리를 단순화해 주세요."
+        )
+    return f"쿼리 실행 실패: {e}"

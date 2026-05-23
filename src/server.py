@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 
+# Hard limit on a single user query (defends against bloated/abusive prompts)
+_MAX_QUERY_LEN = 4000
+
 
 def _serve_local_file(configured: str):
     """Return a FileResponse for a configured local path, or 404."""
@@ -243,6 +246,11 @@ class WebServer:
             return web.json_response({"error": "접근할 수 없는 서비스입니다."}, status=403)
         if not message:
             return web.json_response({"error": "질문 내용이 비어 있습니다."}, status=400)
+        if len(message) > _MAX_QUERY_LEN:
+            return web.json_response(
+                {"error": f"질문이 너무 깁니다 (최대 {_MAX_QUERY_LEN}자)."},
+                status=400,
+            )
 
         session = UserSession(user_id=user.id)
         session.select_service(service_id)
@@ -333,6 +341,12 @@ class WebServer:
                     message = str(data.get("message", "")).strip()
                     if not message:
                         await ws.send_json({"type": "error", "message": "질문 내용이 비어 있습니다."})
+                        continue
+                    if len(message) > _MAX_QUERY_LEN:
+                        await ws.send_json({
+                            "type": "error",
+                            "message": f"질문이 너무 깁니다 (최대 {_MAX_QUERY_LEN}자).",
+                        })
                         continue
                     await self._process_query(ws, session, service, message, loop)
 
