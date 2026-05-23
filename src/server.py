@@ -126,7 +126,13 @@ class WebServer:
         return web.FileResponse(_WEB_DIR / "app.js")
 
     async def _favicon(self, request):
-        return web.Response(status=204)
+        # If a brand logo is configured, use it as the favicon as well.
+        logo = (self._config.brand_logo or "").strip()
+        if not logo:
+            return web.Response(status=204)
+        if logo.startswith(("http://", "https://")):
+            raise web.HTTPFound(logo)
+        return _serve_local_file(logo)
 
     # ── REST: login ───────────────────────────────────────────────────────────
 
