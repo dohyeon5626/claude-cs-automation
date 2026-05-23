@@ -27,6 +27,25 @@
     );
   }
 
+  // Stable pastel icon palette for services (bg + text Tailwind classes)
+  const ICON_PALETTE = [
+    ["bg-indigo-50",  "text-indigo-600"],
+    ["bg-emerald-50", "text-emerald-600"],
+    ["bg-amber-50",   "text-amber-600"],
+    ["bg-rose-50",    "text-rose-600"],
+    ["bg-sky-50",     "text-sky-600"],
+    ["bg-purple-50",  "text-purple-600"],
+    ["bg-teal-50",    "text-teal-600"],
+  ];
+  function iconClassesFor(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return ICON_PALETTE[h % ICON_PALETTE.length];
+  }
+  function initialOf(name) {
+    return (name || "?").trim().charAt(0).toUpperCase() || "?";
+  }
+
   function saveAuth() {
     localStorage.setItem(STORE.token, state.token);
     localStorage.setItem(STORE.userName, state.userName);
@@ -190,7 +209,7 @@
     row.className = "flex";
     const bubble = document.createElement("div");
     bubble.className =
-      "bg-slate-50 border border-slate-200 text-slate-900 " +
+      "bg-white border border-slate-200 shadow-sm text-slate-900 " +
       "rounded-2xl rounded-bl-md px-4 py-3 max-w-[82%] text-sm bot-content";
     bubble.innerHTML = renderMarkdown(md);
     row.appendChild(bubble);
@@ -217,7 +236,7 @@
     row.id = "typing-bubble";
     row.className = "flex";
     row.innerHTML =
-      '<div class="bg-slate-50 border border-slate-200 rounded-2xl rounded-bl-md ' +
+      '<div class="bg-white border border-slate-200 shadow-sm rounded-2xl rounded-bl-md ' +
       'px-5 py-4 flex gap-1.5 items-center">' +
       '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot"></span>' +
       '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot" style="animation-delay:0.16s"></span>' +
@@ -250,6 +269,20 @@
     $("send-btn").disabled = !ready;
   }
 
+  function setChatHeaderIcon(serviceId, serviceName) {
+    const el = $("chat-service-icon");
+    if (!serviceId) {
+      el.className = "hidden";
+      el.textContent = "";
+      return;
+    }
+    const [bg, text] = iconClassesFor(serviceId);
+    el.className =
+      `w-8 h-8 rounded-lg ${bg} ${text} ` +
+      "flex items-center justify-center font-semibold text-sm shrink-0";
+    el.textContent = initialOf(serviceName);
+  }
+
   // ── Service sidebar ──────────────────────────────────────────────────────
   function renderServiceList() {
     const list = $("service-list");
@@ -260,14 +293,23 @@
       return;
     }
     state.services.forEach((svc) => {
+      const [iconBg, iconText] = iconClassesFor(svc.id);
       const btn = document.createElement("button");
       btn.dataset.serviceId = svc.id;
       btn.title = svc.description || "";
-      btn.textContent = svc.name;
-      // default styling; updateServiceHighlight() overrides for the active one
-      btn.className =
-        "w-full text-left px-3 py-1.5 rounded-md text-sm text-slate-600 " +
-        "hover:bg-slate-200/60 hover:text-slate-900 transition truncate";
+
+      const icon = document.createElement("div");
+      icon.className =
+        `w-8 h-8 rounded-lg ${iconBg} ${iconText} ` +
+        "flex items-center justify-center font-semibold text-sm shrink-0";
+      icon.textContent = initialOf(svc.name);
+
+      const label = document.createElement("span");
+      label.className = "text-sm truncate";
+      label.textContent = svc.name;
+
+      btn.appendChild(icon);
+      btn.appendChild(label);
       btn.addEventListener("click", () => selectService(svc.id));
       list.appendChild(btn);
     });
@@ -277,9 +319,16 @@
   function updateServiceHighlight() {
     document.querySelectorAll("#service-list button").forEach((b) => {
       const active = state.currentService && b.dataset.serviceId === state.currentService.id;
-      b.className = active
-        ? "w-full text-left px-3 py-1.5 rounded-md text-sm font-medium bg-slate-200 text-slate-900 truncate"
-        : "w-full text-left px-3 py-1.5 rounded-md text-sm text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 transition truncate";
+      const label = b.querySelector("span");
+      if (active) {
+        b.className =
+          "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-slate-100 transition";
+        label.className = "text-sm font-semibold text-slate-900 truncate";
+      } else {
+        b.className =
+          "w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 transition";
+        label.className = "text-sm text-slate-700 truncate";
+      }
     });
   }
 
@@ -330,6 +379,7 @@
         state.currentService = { id: msg.service_id, name: msg.service_name };
         localStorage.setItem(STORE.lastService, msg.service_id);
         $("chat-service").textContent = msg.service_name;
+        setChatHeaderIcon(msg.service_id, msg.service_name);
         updateServiceHighlight();
         clearMessages();
         hideTypingBubble();
@@ -483,6 +533,7 @@
     setStatus("");
     state.currentService = null;
     $("chat-service").textContent = "서비스를 선택하세요";
+    setChatHeaderIcon(null);
     updateInputAvailable();
     showView("app");
   }

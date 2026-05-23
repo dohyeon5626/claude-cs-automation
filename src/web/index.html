@@ -11,18 +11,31 @@
 
   <!-- ── 로그인 ──────────────────────────────────────────────── -->
   <div id="login-view" class="hidden h-screen flex items-center justify-center p-6">
-    <div class="bg-white border border-slate-200 rounded-2xl w-96 max-w-full p-8">
-      <h1 class="text-xl font-semibold mb-1 text-slate-900">로그인</h1>
-      <p class="text-sm text-slate-500 mb-6">CS Automation 사용을 위해 로그인하세요.</p>
-      <form id="login-form" autocomplete="on">
-        <label for="login-id" class="block text-xs font-medium text-slate-600 mb-1.5">아이디</label>
-        <input id="login-id" type="text" autocomplete="username" placeholder="cs001"
-               class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none">
-        <label for="login-pw" class="block text-xs font-medium text-slate-600 mt-4 mb-1.5">비밀번호</label>
-        <input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호"
-               class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none">
-        <div id="login-error" class="text-sm text-red-500 mt-3 min-h-[20px]"></div>
-        <button type="submit" class="w-full mt-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-medium py-2.5 rounded-lg transition">로그인</button>
+    <div class="bg-white border border-slate-200 rounded-2xl shadow-sm w-[400px] max-w-full p-8">
+      <!-- Brand mark -->
+      <div class="flex items-center gap-2.5 mb-7">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
+          <span class="text-white font-bold text-xs tracking-tight">CS</span>
+        </div>
+        <span class="text-sm font-semibold text-slate-900">CS Automation</span>
+      </div>
+
+      <h1 class="text-xl font-bold text-slate-900">로그인</h1>
+      <p class="text-sm text-slate-500 mt-1 mb-7">아이디와 비밀번호로 로그인하세요.</p>
+
+      <form id="login-form" autocomplete="on" class="space-y-4">
+        <div>
+          <label for="login-id" class="block text-xs font-medium text-slate-600 mb-1.5">아이디</label>
+          <input id="login-id" type="text" autocomplete="username" placeholder="cs001"
+                 class="w-full h-10 bg-white border border-slate-300 rounded-lg px-3 text-sm placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none transition">
+        </div>
+        <div>
+          <label for="login-pw" class="block text-xs font-medium text-slate-600 mb-1.5">비밀번호</label>
+          <input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호"
+                 class="w-full h-10 bg-white border border-slate-300 rounded-lg px-3 text-sm placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none transition">
+        </div>
+        <div id="login-error" class="text-sm text-red-500 min-h-[20px]"></div>
+        <button type="submit" class="w-full h-10 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-medium rounded-lg transition shadow-sm">로그인</button>
       </form>
     </div>
   </div>
@@ -31,13 +44,18 @@
   <div id="app-view" class="hidden flex h-screen">
 
     <!-- 사이드바 -->
-    <aside class="w-60 bg-slate-50 border-r border-slate-200 flex flex-col shrink-0">
-      <div class="h-12 px-4 flex items-center border-b border-slate-200 shrink-0">
-        <span class="text-sm font-semibold text-slate-900">CS Automation</span>
+    <aside class="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0">
+      <div class="h-14 px-4 flex items-center gap-2.5 border-b border-slate-200 shrink-0">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm shrink-0">
+          <span class="text-white font-bold text-xs tracking-tight">CS</span>
+        </div>
+        <span class="text-sm font-semibold text-slate-900 truncate">CS Automation</span>
       </div>
-      <div class="flex-1 overflow-y-auto p-2">
+
+      <div class="flex-1 overflow-y-auto p-2.5">
         <div id="service-list" class="space-y-0.5"></div>
       </div>
+
       <div class="border-t border-slate-200 px-4 py-3 shrink-0">
         <div id="user-name" class="text-sm font-medium text-slate-900 truncate"></div>
         <button id="logout-btn" class="mt-0.5 text-xs text-slate-500 hover:text-slate-900 transition">로그아웃</button>
@@ -45,19 +63,23 @@
     </aside>
 
     <!-- 채팅 -->
-    <main class="flex-1 flex flex-col min-w-0 bg-white">
-      <header class="h-12 bg-white border-b border-slate-200 flex items-center px-5 shrink-0">
+    <main class="flex-1 flex flex-col min-w-0 bg-slate-50">
+      <header class="h-14 bg-white border-b border-slate-200 flex items-center px-6 shrink-0 gap-3">
+        <div id="chat-service-icon" class="hidden w-8 h-8 rounded-lg flex items-center justify-center font-semibold text-sm shrink-0"></div>
         <div id="chat-service" class="text-sm font-semibold text-slate-900 truncate">서비스를 선택하세요</div>
       </header>
-      <div id="messages" class="flex-1 overflow-y-auto p-5 flex flex-col gap-2.5"></div>
+
+      <div id="messages" class="flex-1 overflow-y-auto p-6 flex flex-col gap-3"></div>
+
       <div id="status-line" class="text-xs text-slate-400 text-center py-1 shrink-0 hidden truncate"></div>
+
       <div class="bg-white border-t border-slate-200 px-4 py-3 shrink-0">
         <div class="flex gap-2 items-end">
           <textarea id="chat-input" rows="1"
                     placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"
-                    class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 resize-none max-h-32 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none disabled:opacity-50"></textarea>
+                    class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 resize-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none disabled:opacity-50 transition"></textarea>
           <button id="send-btn" aria-label="전송"
-                  class="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition">
+                  class="w-10 h-10 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg flex items-center justify-center shrink-0 transition shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                  stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
               <path d="M12 19V5"/>
