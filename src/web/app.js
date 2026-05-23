@@ -177,7 +177,7 @@
     row.className = "flex justify-end";
     const bubble = document.createElement("div");
     bubble.className =
-      "bg-indigo-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 " +
+      "bg-indigo-500 text-white rounded-2xl rounded-br-md px-4 py-2.5 " +
       "max-w-[78%] whitespace-pre-wrap text-sm";
     bubble.textContent = text;
     row.appendChild(bubble);
@@ -190,8 +190,8 @@
     row.className = "flex";
     const bubble = document.createElement("div");
     bubble.className =
-      "bg-white border border-slate-200 rounded-2xl rounded-bl-md " +
-      "px-4 py-3 max-w-[82%] text-sm bot-content";
+      "bg-slate-900 border border-slate-800 text-slate-100 " +
+      "rounded-2xl rounded-bl-md px-4 py-3 max-w-[82%] text-sm bot-content";
     bubble.innerHTML = renderMarkdown(md);
     row.appendChild(bubble);
     $("messages").appendChild(row);
@@ -203,7 +203,7 @@
     row.className = "flex";
     const bubble = document.createElement("div");
     bubble.className =
-      "bg-red-50 border border-red-200 text-red-600 " +
+      "bg-red-500/10 border border-red-500/30 text-red-400 " +
       "rounded-xl px-4 py-3 max-w-[82%] text-sm";
     bubble.textContent = text;
     row.appendChild(bubble);
@@ -217,11 +217,11 @@
     row.id = "typing-bubble";
     row.className = "flex";
     row.innerHTML =
-      '<div class="bg-white border border-slate-200 rounded-2xl rounded-bl-md ' +
+      '<div class="bg-slate-900 border border-slate-800 rounded-2xl rounded-bl-md ' +
       'px-5 py-4 flex gap-1.5 items-center">' +
-      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot"></span>' +
-      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot" style="animation-delay:0.16s"></span>' +
-      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot" style="animation-delay:0.32s"></span>' +
+      '<span class="w-1.5 h-1.5 bg-slate-500 rounded-full typing-dot"></span>' +
+      '<span class="w-1.5 h-1.5 bg-slate-500 rounded-full typing-dot" style="animation-delay:0.16s"></span>' +
+      '<span class="w-1.5 h-1.5 bg-slate-500 rounded-full typing-dot" style="animation-delay:0.32s"></span>' +
       "</div>";
     $("messages").appendChild(row);
     scrollMessages();
@@ -256,7 +256,7 @@
     list.innerHTML = "";
     if (state.services.length === 0) {
       list.innerHTML =
-        '<div class="text-xs text-slate-400 px-3 py-2">접근 가능한 서비스가 없습니다.</div>';
+        '<div class="text-xs text-slate-500 px-3 py-2">접근 가능한 서비스가 없습니다.</div>';
       return;
     }
     state.services.forEach((svc) => {
@@ -264,6 +264,10 @@
       btn.dataset.serviceId = svc.id;
       btn.title = svc.description || "";
       btn.textContent = svc.name;
+      // default styling; updateServiceHighlight() overrides for the active one
+      btn.className =
+        "w-full text-left px-3 py-2 rounded-md text-sm text-slate-400 " +
+        "hover:bg-slate-800/60 hover:text-slate-100 transition truncate";
       btn.addEventListener("click", () => selectService(svc.id));
       list.appendChild(btn);
     });
@@ -274,8 +278,8 @@
     document.querySelectorAll("#service-list button").forEach((b) => {
       const active = state.currentService && b.dataset.serviceId === state.currentService.id;
       b.className = active
-        ? "w-full text-left px-3 py-2 rounded-md text-sm font-medium bg-indigo-50 text-indigo-700 truncate"
-        : "w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-slate-100 transition truncate";
+        ? "w-full text-left px-3 py-2 rounded-md text-sm font-medium bg-indigo-500/10 text-indigo-300 truncate"
+        : "w-full text-left px-3 py-2 rounded-md text-sm text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 transition truncate";
     });
   }
 

@@ -1,9 +1,11 @@
 /* Tailwind 가 처리하지 않는 부분만 남깁니다:
-   - 봇 메시지 내부 마크다운 렌더링
-   - 타이핑 인디케이터 애니메이션 */
+   - 봇 메시지 내부 마크다운 렌더링 (다크 톤)
+   - 타이핑 인디케이터 애니메이션
+   - 다크용 스크롤바 */
 
 .bot-content h1, .bot-content h2, .bot-content h3 {
   font-size: 15px; font-weight: 600; margin: 10px 0 4px;
+  color: #f1f5f9;
 }
 .bot-content h1 { font-size: 16px; }
 .bot-content h1:first-child, .bot-content h2:first-child,
@@ -11,7 +13,7 @@
 .bot-content p { margin: 4px 0; }
 .bot-content ul, .bot-content ol { margin: 4px 0 4px 20px; }
 .bot-content li { margin: 2px 0; }
-.bot-content strong { font-weight: 600; }
+.bot-content strong { font-weight: 600; color: #f8fafc; }
 .bot-content table {
   border-collapse: collapse;
   margin: 8px 0;
@@ -19,33 +21,40 @@
   font-size: 13px;
 }
 .bot-content th, .bot-content td {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #1e293b;
   padding: 6px 10px;
   text-align: left;
 }
-.bot-content th { background: #f8fafc; font-weight: 600; }
+.bot-content th { background: #0f172a; color: #cbd5e1; font-weight: 600; }
 .bot-content code {
-  background: #f1f5f9;
+  background: #0f172a;
+  color: #e2e8f0;
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12.5px;
   font-family: "SF Mono", Menlo, Consolas, monospace;
 }
 .bot-content pre {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: #0b1120;
+  border: 1px solid #1e293b;
   padding: 10px 12px;
   border-radius: 8px;
   overflow-x: auto;
   margin: 6px 0;
 }
-.bot-content pre code { background: none; padding: 0; }
-.bot-content a { color: #4f46e5; text-decoration: underline; }
+.bot-content pre code { background: none; padding: 0; color: inherit; }
+.bot-content a { color: #818cf8; text-decoration: underline; }
 
 .typing-dot {
   animation: dotBounce 1.4s infinite ease-in-out;
 }
 @keyframes dotBounce {
-  0%, 60%, 100% { transform: translateY(0);  opacity: 0.45; }
+  0%, 60%, 100% { transform: translateY(0);  opacity: 0.4; }
   30%         { transform: translateY(-4px); opacity: 1; }
 }
+
+/* Dark scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #334155; }
