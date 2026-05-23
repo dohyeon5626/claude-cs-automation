@@ -1,40 +1,95 @@
-# ─────────────────────────────────────────────────────────────
-#  CS Automation 설정 파일
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  CS Automation — config.yml
+#
+#  서비스마다 GitHub 레포와 (선택적으로) 데이터베이스를 등록하고,
+#  웹에 로그인할 사용자를 정의합니다.
+# ═══════════════════════════════════════════════════════════════════════
 
+
+# ─── 1. 서버 ───────────────────────────────────────────────────────────
 server:
-  port: 8765             # 웹 접속 포트 (같은 WiFi의 다른 PC에서 이 포트로 접속)
+  port: 8765                          # 웹 접속 포트
 
+
+# ─── 2. 브랜드 (선택) ──────────────────────────────────────────────────
+# 사이드바·로그인·파비콘에 표시되는 이름과 로고를 정합니다.
+#
+# logo 사용 가능한 값:
+#   ""                                → 이름 첫 글자로 자동 생성 (기본)
+#   "https://example.com/logo.png"    → 인터넷 URL
+#   "./assets/logo.png"               → 프로젝트 루트 기준 로컬 경로
 brand:
-  name: "CS 사이트"  # 사이드바/로그인에 표시될 이름
-  logo: "https://avatars.githubusercontent.com/u/67463759?v=4"               # 이미지 URL("https://...") 또는 로컬 경로("./assets/logo.png")
-                         # 비우면 brand.name 의 첫 글자가 그라데이션 사각형 안에 표시됩니다.
+  name: "Claude CS Automation"
+  logo: ""
 
+
+# ─── 3. Claude CLI ────────────────────────────────────────────────────
+# 서버는 개발자 PC에 설치된 'claude' 명령을 호출합니다.
+#
+# model   sonnet / opus / haiku 등 별칭, 비우면 CLI 기본 모델 사용
+# path    'claude' 가 PATH 에 있다면 생략 가능.
+#         없다면 'which claude' 결과를 절대 경로로 적습니다.
 claude:
-  model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
-  path: "/Users/dohyeon5626/.vscode/extensions/anthropic.claude-code-2.1.145-darwin-arm64/resources/native-binary/claude"
+  model: "sonnet"
+  # path: "/path/to/claude"
 
 
-# ── 서비스 ─────────────────────────────────────────────────────
-# 서비스마다 자기 데이터베이스와 GitHub 레포를 각각 설정합니다.
-# database 는 선택 사항입니다 — 없으면 Claude가 레포 코드/문서만 보고 답합니다.
+# ─── 4. 서비스 ────────────────────────────────────────────────────────
+# "서비스 하나 = 조회 대상 하나" 입니다.
+#
+#   id          (필수)   내부 식별자. 영문/숫자/_ 만 사용
+#   name        (필수)   사이드바·헤더에 표시될 이름
+#   description (선택)   부제. 사이드바와 채팅 헤더에 보조 텍스트로 표시
+#   logo        (선택)   서비스 아이콘 (URL 또는 로컬 경로).
+#                        비우면 이름 첫 글자로 파스텔 아이콘 자동 생성
+#   github      (필수)   참조할 GitHub 레포지토리
+#                          url    : 레포 주소
+#                          branch : 기준 브랜치
+#   database    (선택)   조회할 MySQL DB. 생략하면 레포 문서만 사용
 services:
-  - id: "serverless"
-    name: "테스트"
-    description: "서버리스 프로젝트"
-    # logo 가 비어 있으면 서비스 이름 첫 글자로 자동 아이콘이 만들어집니다.
-    # 채우면 URL 또는 로컬 경로 사용 가능.
-    logo: "https://avatars.githubusercontent.com/u/67463759?v=4"
+
+  # ── 예시 1) DB 가 있는 서비스 ─────────────────────────────────────
+  - id: "order"
+    name: "주문 서비스"
+    description: "주문 조회 및 배송 상태 확인"
+    logo: ""
     github:
-      url: "https://github.com/dohyeon5626/serverless-functions"
+      url: "https://github.com/yourorg/order-service"
+      branch: "main"
+    database:
+      host: "localhost"
+      port: 3306
+      name: "order_db"
+      user: "readonly_user"
+      password: "db_password"
+
+  # ── 예시 2) DB 없이 레포 문서만 사용 ─────────────────────────────
+  - id: "knowledge"
+    name: "지식 베이스"
+    description: "사내 매뉴얼/문서 검색"
+    # logo: "./assets/knowledge.png"
+    github:
+      url: "https://github.com/yourorg/knowledge-base"
       branch: "main"
 
 
-# ── 사용자 ─────────────────────────────────────────────────────
-# 웹에 로그인하는 계정입니다.
-#   services : 접근 가능한 서비스 id 목록. ["*"] 이면 모든 서비스 접근 가능
+# ─── 5. 사용자 ────────────────────────────────────────────────────────
+# 웹에 로그인할 계정 목록입니다.
+#
+#   id / password   (필수)
+#   name            (선택)   사이드바에 표시될 이름. 비우면 id 가 표시됨
+#   services        (필수)   접근 가능한 서비스 id 목록
+#                              예) ["order"]               → 주문만 접근
+#                              예) ["order", "knowledge"]  → 두 개 모두
+#                              예) ["*"]                    → 전체 접근
 users:
+
   - id: "admin"
-    password: "admin"
-    name: "테스트"
+    password: "changeme"
+    name: "관리자"
     services: ["*"]
+
+  - id: "cs001"
+    password: "changeme"
+    name: "김상담"
+    services: ["order", "knowledge"]
