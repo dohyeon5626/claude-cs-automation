@@ -7,7 +7,10 @@ server:
 
 brand:
   name: "CS Automation"  # 사이드바/로그인에 표시될 이름
-  mark: "CS"             # 로고 그라데이션 안에 들어갈 글자 (1~3자 권장)
+  mark: "CS"             # logo 가 없을 때 그라데이션 안에 들어갈 글자 (1~3자 권장)
+  # logo 가 설정되어 있으면 그라데이션 마크 대신 그 이미지가 표시됩니다.
+  # URL("https://...") 또는 로컬 경로(프로젝트 루트 기준 "./assets/logo.png") 가능.
+  logo: ""
 
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용

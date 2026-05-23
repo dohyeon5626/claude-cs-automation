@@ -39,6 +39,7 @@ class WebServer:
                 web.get("/", self._serve_index),
                 web.get("/style.css", self._serve_css),
                 web.get("/app.js", self._serve_js),
+                web.get("/logo", self._serve_logo),
                 web.get("/favicon.ico", self._favicon),
                 web.post("/api/login", self._api_login),
                 web.post("/api/query", self._api_query),
@@ -46,6 +47,38 @@ class WebServer:
             ]
         )
         return app
+
+    # ── Brand / logo rendering ────────────────────────────────────────────────
+
+    def _logo_html(self, size_classes: str) -> str:
+        """Return HTML for the brand mark — either an <img> or a gradient square."""
+        logo = self._config.brand_logo
+        if not logo:
+            mark = _html.escape(self._config.brand_mark)
+            return (
+                f'<div class="{size_classes} rounded-lg bg-gradient-to-br '
+                f'from-violet-500 to-indigo-600 flex items-center justify-center '
+                f'shadow-sm shrink-0">'
+                f'<span class="text-white font-bold text-xs tracking-tight">{mark}</span>'
+                f"</div>"
+            )
+        src = logo if logo.startswith(("http://", "https://")) else "/logo"
+        return (
+            f'<img src="{_html.escape(src)}" alt="" '
+            f'class="{size_classes} rounded-lg object-cover shadow-sm shrink-0">'
+        )
+
+    async def _serve_logo(self, request):
+        """Serve the configured local logo file (no-op if it's a URL or unset)."""
+        logo = self._config.brand_logo
+        if not logo or logo.startswith(("http://", "https://")):
+            return web.Response(status=404)
+        path = Path(logo)
+        if not path.is_absolute():
+            path = path.resolve()
+        if not path.exists() or not path.is_file():
+            return web.Response(status=404)
+        return web.FileResponse(path)
 
     # ── Static files ──────────────────────────────────────────────────────────
 
@@ -55,7 +88,8 @@ class WebServer:
         rendered = (
             template
             .replace("{{BRAND_NAME}}", _html.escape(self._config.brand_name))
-            .replace("{{BRAND_MARK}}", _html.escape(self._config.brand_mark))
+            .replace("{{BRAND_LOGO_LG}}", self._logo_html("w-9 h-9"))
+            .replace("{{BRAND_LOGO_SM}}", self._logo_html("w-8 h-8"))
         )
         return web.Response(text=rendered, content_type="text/html")
 
