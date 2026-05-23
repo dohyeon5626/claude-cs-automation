@@ -7,7 +7,7 @@ server:
 
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
-  # path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
+  path: "/Users/dohyeon5626/.vscode/extensions/anthropic.claude-code-2.1.145-darwin-arm64/resources/native-binary/claude"
 
 
 # ── 서비스 ─────────────────────────────────────────────────────

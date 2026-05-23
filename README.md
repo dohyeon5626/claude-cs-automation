@@ -115,15 +115,31 @@ users:
 
 ## 실행하기
 
+가상환경(venv) 안에서 실행하는 걸 권장합니다. 시스템 파이썬을 더럽히지 않습니다.
+
 ```bash
-# 1) 의존성 설치
+# 1) 가상환경 만들기 (최초 1회)
+python -m venv .venv
+
+# 2) 가상환경 활성화 (터미널 열 때마다)
+source .venv/bin/activate          # macOS / Linux
+# 또는 (Windows PowerShell)
+.venv\Scripts\Activate.ps1
+
+# 3) 의존성 설치 (최초 1회)
 pip install -r requirements.txt
 
-# 2) config.yml 작성 (위 설명 참고)
+# 4) config.yml 작성 (위 설명 참고)
 
-# 3) 서버 실행
+# 5) 서버 실행
 python run.py
 ```
+
+> 매번 활성화하기 귀찮으면 활성화 없이 직접 실행해도 됩니다:
+> ```bash
+> .venv/bin/python run.py        # macOS / Linux
+> .venv\Scripts\python run.py    # Windows
+> ```
 
 서버가 켜지면 시작 검증(Git · Claude CLI · 서비스별 DB/레포)을 거친 뒤
 **접속 주소를 화면에 출력합니다.**

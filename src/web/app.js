@@ -23,6 +23,20 @@
     );
   }
 
+  // Stable color picker for service icons / chat header
+  const ICON_PALETTE = [
+    "#5667ff", "#10b981", "#f59e0b", "#ef4444",
+    "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16",
+  ];
+  function colorFor(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return ICON_PALETTE[h % ICON_PALETTE.length];
+  }
+  function initialOf(name) {
+    return (name || "?").trim().charAt(0).toUpperCase() || "?";
+  }
+
   // ── Minimal, XSS-safe Markdown renderer ────────────────────────────────────
 
   function escapeHtml(s) {
@@ -211,6 +225,24 @@
     scrollMessages();
   }
 
+  function showTypingBubble() {
+    if (document.getElementById("typing-bubble")) return;
+    const row = document.createElement("div");
+    row.id = "typing-bubble";
+    row.className = "msg-row bot";
+    row.innerHTML =
+      '<div class="bubble bot typing">' +
+      '<span class="dot"></span><span class="dot"></span><span class="dot"></span>' +
+      '</div>';
+    $("messages").appendChild(row);
+    scrollMessages();
+  }
+
+  function hideTypingBubble() {
+    const el = document.getElementById("typing-bubble");
+    if (el) el.remove();
+  }
+
   function setStatus(text) {
     const s = $("status-line");
     if (text) {
@@ -246,6 +278,11 @@
       const card = document.createElement("div");
       card.className = "service-card";
 
+      const icon = document.createElement("div");
+      icon.className = "service-card-icon";
+      icon.style.background = colorFor(svc.id);
+      icon.textContent = initialOf(svc.name);
+
       const textBox = document.createElement("div");
       textBox.className = "service-card-text";
       const name = document.createElement("div");
@@ -261,6 +298,7 @@
       arrow.className = "service-card-arrow";
       arrow.textContent = "›";
 
+      card.appendChild(icon);
       card.appendChild(textBox);
       card.appendChild(arrow);
       card.addEventListener("click", () => {
@@ -300,6 +338,7 @@
   function handleDisconnect() {
     if (!state.token) return;
     if (!views.chat.classList.contains("hidden")) {
+      hideTypingBubble();
       addErrorMessage("서버와의 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
       setStatus("");
       setSending(false);
@@ -326,13 +365,19 @@
       case "service_selected":
         state.currentService = { id: msg.service_id, name: msg.service_name };
         $("chat-service").textContent = msg.service_name;
+        const dot = document.querySelector(".mini-logo");
+        if (dot) {
+          dot.style.background = colorFor(msg.service_id);
+          dot.textContent = initialOf(msg.service_name);
+        }
         clearMessages();
+        hideTypingBubble();
         setStatus("");
         setSending(false);
         addBotMessage(
           "**" +
             msg.service_name +
-            "** 서비스에 연결되었습니다.\n\n조회하실 내용을 질문해 주세요."
+            "** 서비스에 연결되었습니다.\n\n조회하실 내용을 자연어로 입력해 보세요."
         );
         showView("chat");
         $("chat-input").focus();
@@ -343,6 +388,7 @@
         break;
 
       case "response":
+        hideTypingBubble();
         setStatus("");
         setSending(false);
         addBotMessage(msg.message || "");
@@ -350,6 +396,7 @@
 
       case "error":
         if (!views.chat.classList.contains("hidden")) {
+          hideTypingBubble();
           setStatus("");
           setSending(false);
           addErrorMessage(msg.message || "오류가 발생했습니다.");
@@ -452,8 +499,9 @@
     input.value = "";
     autoGrow(input);
     addUserMessage(text);
+    showTypingBubble();
     setSending(true);
-    setStatus("처리 중...");
+    setStatus("");
     state.ws.send(JSON.stringify({ type: "query", message: text }));
   }
 
