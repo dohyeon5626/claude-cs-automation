@@ -110,7 +110,7 @@ class ClaudeAgent:
         repo_path = service.config.repo_path
 
         # 1. Pull the repo (non-fatal: fall back to the existing checkout)
-        status_callback("레포지토리를 동기화하고 있습니다...")
+        status_callback("최신 코드 동기화 중...")
         try:
             pull_repo(service.config.github, repo_path)
         except RuntimeError as e:
@@ -122,7 +122,7 @@ class ClaudeAgent:
         # 2. Refresh the live database schema (skip if the service has no DB)
         live_schema = None
         if db is not None:
-            status_callback("데이터베이스 스키마를 확인하고 있습니다...")
+            status_callback("데이터베이스 스키마 확인 중...")
             live_schema = db.get_schema()
 
         # 3. Agentic loop
@@ -130,9 +130,9 @@ class ClaudeAgent:
 
         for iteration in range(_MAX_ITERATIONS):
             status_callback(
-                "Claude가 분석 중입니다..."
+                "요청 분석 중..."
                 if iteration == 0
-                else "Claude가 추가 분석 중입니다..."
+                else "추가 분석 중..."
             )
 
             reply, new_session_id = self._invoke_cli(
@@ -153,7 +153,7 @@ class ClaudeAgent:
                     )
                     continue
                 preview = " ".join(payload.split())[:70]
-                status_callback(f"DB 조회 중: {preview}...")
+                status_callback(f"데이터 조회 중 · {preview}")
                 turn_prompt = self._run_query(db, payload)
             else:  # ANSWER (or fallback)
                 return payload

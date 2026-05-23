@@ -19,7 +19,7 @@
       </div>
 
       <h1 class="text-xl font-bold text-slate-900">로그인</h1>
-      <p class="text-sm text-slate-500 mt-1 mb-7">아이디와 비밀번호로 로그인하세요.</p>
+      <p class="text-sm text-slate-500 mt-1 mb-7">아이디와 비밀번호를 입력해 주세요.</p>
 
       <form id="login-form" autocomplete="on" class="space-y-4">
         <div>
@@ -52,9 +52,12 @@
         <div id="service-list" class="space-y-0.5"></div>
       </div>
 
-      <div class="h-[65px] border-t border-slate-200 px-4 shrink-0 flex flex-col justify-center">
-        <div id="user-name" class="text-sm font-medium text-slate-900 truncate"></div>
-        <button id="logout-btn" class="mt-0.5 text-xs text-slate-500 hover:text-slate-900 transition self-start">로그아웃</button>
+      <div class="h-[65px] border-t border-slate-200 px-4 shrink-0 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div id="user-name" class="text-sm font-medium text-slate-900 truncate"></div>
+          <div id="user-id" class="text-xs text-slate-500 truncate"></div>
+        </div>
+        <button id="logout-btn" class="text-xs text-slate-500 hover:text-slate-900 transition shrink-0">로그아웃</button>
       </div>
     </aside>
 
@@ -67,14 +70,20 @@
 
       <div id="messages" class="flex-1 overflow-y-auto p-6 flex flex-col gap-3"></div>
 
-      <div id="status-line" class="h-6 leading-6 text-xs text-slate-400 text-center shrink-0 truncate opacity-0 transition-opacity"></div>
+      <div id="status-line" class="h-6 text-xs text-slate-400 shrink-0 opacity-0 transition-opacity flex items-center justify-center gap-1.5">
+        <svg class="w-3 h-3 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/>
+          <path d="M12 3a9 9 0 0 1 9 9"/>
+        </svg>
+        <span id="status-text" class="truncate"></span>
+      </div>
 
       <div class="bg-white border-t border-slate-200 px-4 py-3 shrink-0 flex items-end gap-2">
         <textarea id="chat-input" rows="1"
-                  placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"
+                  placeholder="조회할 내용을 입력해 주세요  (Enter 전송 · Shift+Enter 줄바꿈)"
                   class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-400 resize-none max-h-32 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none disabled:opacity-50 transition"></textarea>
         <button id="send-btn" aria-label="전송"
-                class="w-10 h-10 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg flex items-center justify-center shrink-0 transition shadow-sm hover:shadow-md">
+                class="w-10 h-10 bg-slate-900 hover:bg-slate-800 active:scale-[0.97] disabled:bg-slate-200 disabled:text-slate-400 disabled:active:scale-100 text-white rounded-lg flex items-center justify-center shrink-0 transition shadow-sm hover:shadow-md">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
             <path d="M12 19V5"/>

@@ -5,7 +5,8 @@
   const state = {
     token: null,
     userName: "",
-    services: [],         // [{id, name, description}]
+    userId: "",
+    services: [],         // [{id, name, description, logo_url}]
     currentService: null, // {id, name}
     ws: null,
     sending: false,
@@ -14,6 +15,7 @@
   const STORE = {
     token: "cs_token",
     userName: "cs_user_name",
+    userId: "cs_user_id",
     services: "cs_services",
     lastService: "cs_last_service",
   };
@@ -49,15 +51,18 @@
   function saveAuth() {
     localStorage.setItem(STORE.token, state.token);
     localStorage.setItem(STORE.userName, state.userName);
+    localStorage.setItem(STORE.userId, state.userId);
     localStorage.setItem(STORE.services, JSON.stringify(state.services));
   }
   function clearAuth() {
     state.token = null;
     state.userName = "";
+    state.userId = "";
     state.services = [];
     state.currentService = null;
     localStorage.removeItem(STORE.token);
     localStorage.removeItem(STORE.userName);
+    localStorage.removeItem(STORE.userId);
     localStorage.removeItem(STORE.services);
     localStorage.removeItem(STORE.lastService);
   }
@@ -252,9 +257,8 @@
   }
 
   function setStatus(text) {
-    const s = $("status-line");
-    s.textContent = text || "";
-    s.style.opacity = text ? "1" : "0";
+    $("status-text").textContent = text || "";
+    $("status-line").style.opacity = text ? "1" : "0";
   }
 
   function setSending(sending) {
@@ -324,7 +328,7 @@
     list.innerHTML = "";
     if (state.services.length === 0) {
       list.innerHTML =
-        '<div class="text-xs text-slate-400 px-3 py-2">접근 가능한 서비스가 없습니다.</div>';
+        '<div class="text-xs text-slate-400 px-3 py-2">접근 가능한 서비스가 없습니다. 관리자에게 문의해 주세요.</div>';
       return;
     }
     state.services.forEach((svc) => {
@@ -399,7 +403,7 @@
         clearAuth();
         showView("login");
         $("login-error").textContent =
-          msg.message || "세션이 만료되었습니다. 다시 로그인하세요.";
+          msg.message || "세션이 만료되었습니다. 다시 로그인해 주세요.";
         enableLoginButton();
         $("login-id").focus();
         break;
@@ -414,7 +418,10 @@
         hideTypingBubble();
         setStatus("");
         setSending(false);
-        addBotMessage("**" + msg.service_name + "** — 질문을 입력해 보세요.");
+        addBotMessage(
+          "**" + msg.service_name + "** 서비스에 연결되었습니다.\n\n" +
+          "조회할 내용을 자연어로 입력해 주세요. 코드와 데이터를 분석해 답변해 드립니다."
+        );
         $("chat-input").focus();
         break;
 
@@ -434,7 +441,7 @@
           hideTypingBubble();
           setStatus("");
           setSending(false);
-          addErrorMessage(msg.message || "오류가 발생했습니다.");
+          addErrorMessage(msg.message || "처리 중 오류가 발생했습니다.");
         }
         break;
     }
@@ -448,16 +455,16 @@
         clearAuth();
         showView("login");
         enableLoginButton();
-        $("login-error").textContent = "서버와 연결할 수 없습니다.";
+        $("login-error").textContent = "서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.";
       } else {
         hideTypingBubble();
-        addErrorMessage("서버와의 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
+        addErrorMessage("서버 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
         setStatus("");
         setSending(false);
       }
     } else if (!views.login.classList.contains("hidden")) {
       enableLoginButton();
-      $("login-error").textContent = "서버와의 연결이 끊어졌습니다.";
+      $("login-error").textContent = "서버 연결이 끊어졌습니다.";
     }
   }
 
@@ -476,7 +483,7 @@
     const btn = e.target.querySelector("button");
 
     if (!id || !pw) {
-      errEl.textContent = "아이디와 비밀번호를 입력하세요.";
+      errEl.textContent = "아이디와 비밀번호를 모두 입력해 주세요.";
       return;
     }
     errEl.textContent = "";
@@ -491,18 +498,19 @@
       });
       const data = await res.json();
       if (!res.ok) {
-        errEl.textContent = data.error || "로그인에 실패했습니다.";
+        errEl.textContent = data.error || "로그인에 실패했습니다. 다시 시도해 주세요.";
         enableLoginButton();
         return;
       }
       state.token = data.token;
       state.userName = data.user_name;
+      state.userId = data.user_id;
       state.services = data.services || [];
       saveAuth();
       enterApp();
       connectWebSocket();
     } catch (err) {
-      errEl.textContent = "서버에 연결할 수 없습니다.";
+      errEl.textContent = "서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.";
       enableLoginButton();
     }
   });
@@ -529,7 +537,7 @@
     if (state.sending) return;
     if (!state.currentService) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      addErrorMessage("서버와 연결되어 있지 않습니다. 페이지를 새로고침해 주세요.");
+      addErrorMessage("서버 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
       return;
     }
     const input = $("chat-input");
@@ -557,6 +565,7 @@
   // ── Entry into the app shell (after login or after restoring from storage) ──
   function enterApp() {
     $("user-name").textContent = state.userName;
+    $("user-id").textContent = state.userId;
     renderServiceList();
     clearMessages();
     setStatus("");
@@ -580,6 +589,7 @@
     // will bounce us back to the login screen.
     state.token = token;
     state.userName = localStorage.getItem(STORE.userName) || "";
+    state.userId = localStorage.getItem(STORE.userId) || "";
     try {
       state.services = JSON.parse(localStorage.getItem(STORE.services) || "[]");
     } catch (e) {

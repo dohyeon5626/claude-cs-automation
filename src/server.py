@@ -307,7 +307,7 @@ class WebServer:
             )
 
         try:
-            await ws.send_json({"type": "status", "message": "요청을 분석하고 있습니다..."})
+            await ws.send_json({"type": "status", "message": "요청 분석 중..."})
             answer = await loop.run_in_executor(
                 None,
                 self._agent.process_query,
