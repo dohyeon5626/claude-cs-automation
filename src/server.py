@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
+def _serve_local_file(configured: str):
+    """Return a FileResponse for a configured local path, or 404."""
+    path_str = (configured or "").strip()
+    if not path_str or path_str.startswith(("http://", "https://")):
+        return web.Response(status=404)
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = path.resolve()
+    if not path.exists() or not path.is_file():
+        return web.Response(status=404)
+    return web.FileResponse(path)
+
+
 class WebServer:
     """aiohttp application: serves the web page, the REST API, and the WebSocket."""
 
@@ -40,6 +53,7 @@ class WebServer:
                 web.get("/style.css", self._serve_css),
                 web.get("/app.js", self._serve_js),
                 web.get("/logo", self._serve_logo),
+                web.get("/service/{sid}/logo", self._serve_service_logo),
                 web.get("/favicon.ico", self._favicon),
                 web.post("/api/login", self._api_login),
                 web.post("/api/query", self._api_query),
@@ -51,34 +65,46 @@ class WebServer:
     # ── Brand / logo rendering ────────────────────────────────────────────────
 
     def _logo_html(self, size_classes: str) -> str:
-        """Return HTML for the brand mark — either an <img> or a gradient square."""
+        """
+        Return HTML for the brand mark. Either an <img> when brand.logo is set,
+        or a gradient square containing the first character of brand.name.
+        """
         logo = self._config.brand_logo
-        if not logo:
-            mark = _html.escape(self._config.brand_mark)
+        if logo:
+            src = logo if logo.startswith(("http://", "https://")) else "/logo"
             return (
-                f'<div class="{size_classes} rounded-lg bg-gradient-to-br '
-                f'from-violet-500 to-indigo-600 flex items-center justify-center '
-                f'shadow-sm shrink-0">'
-                f'<span class="text-white font-bold text-xs tracking-tight">{mark}</span>'
-                f"</div>"
+                f'<img src="{_html.escape(src)}" alt="" '
+                f'class="{size_classes} rounded-lg object-cover shadow-sm shrink-0">'
             )
-        src = logo if logo.startswith(("http://", "https://")) else "/logo"
+        initial = _html.escape((self._config.brand_name.strip()[:1] or "?").upper())
         return (
-            f'<img src="{_html.escape(src)}" alt="" '
-            f'class="{size_classes} rounded-lg object-cover shadow-sm shrink-0">'
+            f'<div class="{size_classes} rounded-lg bg-gradient-to-br '
+            f'from-violet-500 to-indigo-600 flex items-center justify-center '
+            f'shadow-sm shrink-0">'
+            f'<span class="text-white font-bold text-xs tracking-tight">{initial}</span>'
+            f"</div>"
         )
 
+    def _service_logo_url(self, svc_cfg) -> str:
+        """URL the browser should use to fetch this service's logo. Empty if none."""
+        logo = (svc_cfg.logo or "").strip()
+        if not logo:
+            return ""
+        if logo.startswith(("http://", "https://")):
+            return logo
+        return f"/service/{svc_cfg.id}/logo"
+
     async def _serve_logo(self, request):
-        """Serve the configured local logo file (no-op if it's a URL or unset)."""
-        logo = self._config.brand_logo
-        if not logo or logo.startswith(("http://", "https://")):
+        """Serve the configured local brand logo file."""
+        return _serve_local_file(self._config.brand_logo)
+
+    async def _serve_service_logo(self, request):
+        """Serve a service's local logo file."""
+        sid = request.match_info["sid"]
+        svc = self._services.get(sid)
+        if not svc:
             return web.Response(status=404)
-        path = Path(logo)
-        if not path.is_absolute():
-            path = path.resolve()
-        if not path.exists() or not path.is_file():
-            return web.Response(status=404)
-        return web.FileResponse(path)
+        return _serve_local_file(svc.config.logo)
 
     # ── Static files ──────────────────────────────────────────────────────────
 
@@ -121,7 +147,12 @@ class WebServer:
 
         user = self._auth.user_for_token(token)
         services = [
-            {"id": s.id, "name": s.name, "description": s.description}
+            {
+                "id": s.id,
+                "name": s.name,
+                "description": s.description,
+                "logo_url": self._service_logo_url(s),
+            }
             for s in self._auth.allowed_services(user)
         ]
         logger.info(f"Login success: {user.id}")

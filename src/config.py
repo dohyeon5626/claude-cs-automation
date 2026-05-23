@@ -27,6 +27,7 @@ class ServiceConfig:
     description: str
     github: GithubConfig
     database: Optional[DatabaseConfig] = None  # 데이터베이스가 없는 서비스도 허용
+    logo: str = ""  # 이미지 URL 또는 로컬 경로. 비어 있으면 파스텔 첫 글자 아이콘 자동 생성
 
     @property
     def repo_path(self) -> str:
@@ -48,8 +49,7 @@ class AppConfig:
     claude_model: str
     claude_binary: str  # 'claude' (PATH 사용) 또는 절대 경로
     brand_name: str     # 사이드바/로그인에 표시되는 이름
-    brand_mark: str     # 로고 그라데이션 안에 표시되는 글자 (1~3자 권장)
-    brand_logo: str     # 이미지 URL 또는 로컬 경로. 비어 있으면 mark 글자 사각형 사용
+    brand_logo: str     # 이미지 URL 또는 로컬 경로. 비어 있으면 brand_name 첫 글자가 표시됨
     services: List[ServiceConfig] = field(default_factory=list)
     users: List[UserConfig] = field(default_factory=list)
 
@@ -90,7 +90,6 @@ def load_config(path: str = "config.yml") -> AppConfig:
         claude_model=str(claude_section.get("model", "") or ""),
         claude_binary=str(claude_section.get("path", "") or "claude"),
         brand_name=str(brand_section.get("name", "") or "CS Automation"),
-        brand_mark=str(brand_section.get("mark", "") or "CS"),
         brand_logo=str(brand_section.get("logo", "") or ""),
         services=services,
         users=users,
@@ -116,6 +115,7 @@ def _parse_service(s: dict) -> ServiceConfig:
         description=str(s.get("description", "")),
         github=GithubConfig(url=str(gh["url"]), branch=str(gh["branch"])),
         database=database,
+        logo=str(s.get("logo", "") or ""),
     )
 
 

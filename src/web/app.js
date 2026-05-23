@@ -269,18 +269,53 @@
     $("send-btn").disabled = !ready;
   }
 
+  function makeServiceIcon(svc, sizeClasses) {
+    // If a logo URL is configured for the service, render an <img>;
+    // otherwise fall back to a pastel-colored letter tile.
+    if (svc && svc.logo_url) {
+      const wrap = document.createElement("div");
+      wrap.className = `${sizeClasses} rounded-lg overflow-hidden shrink-0`;
+      const img = document.createElement("img");
+      img.src = svc.logo_url;
+      img.alt = "";
+      img.className = "w-full h-full object-cover";
+      wrap.appendChild(img);
+      return wrap;
+    }
+    const [bg, text] = iconClassesFor(svc.id);
+    const div = document.createElement("div");
+    div.className =
+      `${sizeClasses} rounded-lg ${bg} ${text} ` +
+      "flex items-center justify-center font-semibold text-sm shrink-0";
+    div.textContent = initialOf(svc.name);
+    return div;
+  }
+
   function setChatHeaderIcon(serviceId, serviceName) {
     const el = $("chat-service-icon");
     if (!serviceId) {
       el.className = "hidden";
-      el.textContent = "";
+      el.replaceChildren();
       return;
     }
-    const [bg, text] = iconClassesFor(serviceId);
-    el.className =
-      `w-8 h-8 rounded-lg ${bg} ${text} ` +
-      "flex items-center justify-center font-semibold text-sm shrink-0";
-    el.textContent = initialOf(serviceName);
+    const svc = state.services.find((s) => s.id === serviceId)
+              || { id: serviceId, name: serviceName, logo_url: "" };
+    el.replaceChildren();
+
+    if (svc.logo_url) {
+      el.className = "w-8 h-8 rounded-lg overflow-hidden shrink-0";
+      const img = document.createElement("img");
+      img.src = svc.logo_url;
+      img.alt = "";
+      img.className = "w-full h-full object-cover";
+      el.appendChild(img);
+    } else {
+      const [bg, text] = iconClassesFor(serviceId);
+      el.className =
+        `w-8 h-8 rounded-lg ${bg} ${text} ` +
+        "flex items-center justify-center font-semibold text-sm shrink-0";
+      el.textContent = initialOf(serviceName);
+    }
   }
 
   // ── Service sidebar ──────────────────────────────────────────────────────
@@ -293,22 +328,16 @@
       return;
     }
     state.services.forEach((svc) => {
-      const [iconBg, iconText] = iconClassesFor(svc.id);
       const btn = document.createElement("button");
       btn.dataset.serviceId = svc.id;
       btn.title = svc.description || "";
 
-      const icon = document.createElement("div");
-      icon.className =
-        `w-8 h-8 rounded-lg ${iconBg} ${iconText} ` +
-        "flex items-center justify-center font-semibold text-sm shrink-0";
-      icon.textContent = initialOf(svc.name);
+      btn.appendChild(makeServiceIcon(svc, "w-8 h-8"));
 
       const label = document.createElement("span");
       label.className = "text-sm truncate";
       label.textContent = svc.name;
 
-      btn.appendChild(icon);
       btn.appendChild(label);
       btn.addEventListener("click", () => selectService(svc.id));
       list.appendChild(btn);
