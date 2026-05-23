@@ -4,61 +4,64 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CS Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="bg-slate-50 text-slate-900 antialiased h-screen overflow-hidden">
 
-  <!-- ── 로그인 화면 ────────────────────────────────────────────── -->
-  <div id="login-view" class="view">
-    <div class="card login-card">
-      <div class="logo">CS</div>
-      <h1>CS Automation</h1>
-      <p class="subtitle">아이디와 비밀번호로 로그인하세요</p>
+  <!-- ── 로그인 ───────────────────────────────────────────── -->
+  <div id="login-view" class="h-screen flex items-center justify-center p-6">
+    <div class="bg-white border border-slate-200 rounded-2xl shadow-sm w-96 max-w-full p-10">
+      <div class="w-12 h-12 mx-auto mb-5 rounded-xl bg-indigo-600 text-white font-semibold flex items-center justify-center">CS</div>
+      <h1 class="text-center text-xl font-semibold">CS Automation</h1>
+      <p class="text-center text-sm text-slate-500 mt-1 mb-7">아이디와 비밀번호로 로그인</p>
       <form id="login-form" autocomplete="on">
-        <label for="login-id">아이디</label>
-        <input id="login-id" type="text" autocomplete="username" placeholder="cs001">
-        <label for="login-pw">비밀번호</label>
-        <input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호">
-        <div id="login-error" class="error-text"></div>
-        <button type="submit" class="btn-primary">로그인</button>
+        <label for="login-id" class="block text-xs font-medium text-slate-600 mb-1.5">아이디</label>
+        <input id="login-id" type="text" autocomplete="username" placeholder="cs001"
+               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none">
+        <label for="login-pw" class="block text-xs font-medium text-slate-600 mt-4 mb-1.5">비밀번호</label>
+        <input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호"
+               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none">
+        <div id="login-error" class="text-sm text-red-500 mt-3 min-h-[20px]"></div>
+        <button type="submit" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition">로그인</button>
       </form>
     </div>
   </div>
 
-  <!-- ── 서비스 선택 화면 ───────────────────────────────────────── -->
-  <div id="service-view" class="view hidden">
-    <div class="topbar">
-      <div class="topbar-title">서비스 선택</div>
-      <div class="topbar-actions">
-        <span id="service-user" class="user-chip"></span>
-        <button id="logout-btn" class="btn-ghost">로그아웃</button>
+  <!-- ── 서비스 선택 ──────────────────────────────────────── -->
+  <div id="service-view" class="hidden h-screen flex flex-col">
+    <div class="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
+      <div class="font-semibold">서비스 선택</div>
+      <div class="flex items-center gap-3">
+        <span id="service-user" class="text-sm text-slate-500"></span>
+        <button id="logout-btn" class="text-sm text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded">로그아웃</button>
       </div>
     </div>
-    <div class="service-wrap">
-      <p id="service-hint" class="hint">담당하실 서비스를 선택하세요</p>
-      <div id="service-list" class="service-list"></div>
+    <div class="flex-1 overflow-y-auto">
+      <div class="max-w-2xl mx-auto px-6 py-8">
+        <p id="service-hint" class="text-sm text-slate-500 mb-4">담당하실 서비스를 선택하세요</p>
+        <div id="service-list" class="flex flex-col gap-2"></div>
+      </div>
     </div>
   </div>
 
-  <!-- ── 채팅 화면 ─────────────────────────────────────────────── -->
-  <div id="chat-view" class="view hidden">
-    <div class="chat-header">
-      <div class="mini-logo">CS</div>
-      <div class="chat-titles">
-        <div id="chat-service" class="chat-service">CS Agent</div>
-        <div class="chat-sub">AI 데이터 조회 어시스턴트</div>
-      </div>
-      <div class="chat-actions">
-        <button id="change-service-btn" class="btn-ghost">서비스 변경</button>
-        <button id="chat-logout-btn" class="btn-ghost">로그아웃</button>
+  <!-- ── 채팅 ────────────────────────────────────────────── -->
+  <div id="chat-view" class="hidden h-screen flex flex-col">
+    <div class="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3 shrink-0">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white text-sm font-semibold flex items-center justify-center shrink-0">CS</div>
+      <div id="chat-service" class="flex-1 min-w-0 font-medium text-sm truncate">CS Agent</div>
+      <div class="flex gap-1">
+        <button id="change-service-btn" class="text-sm text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded">서비스 변경</button>
+        <button id="chat-logout-btn" class="text-sm text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded">로그아웃</button>
       </div>
     </div>
-    <div id="messages" class="messages"></div>
-    <div id="status-line" class="status-line hidden"></div>
-    <div class="input-bar">
+    <div id="messages" class="flex-1 overflow-y-auto p-6 flex flex-col gap-3"></div>
+    <div id="status-line" class="text-xs text-slate-400 text-center py-1 shrink-0 hidden truncate"></div>
+    <div class="bg-white border-t border-slate-200 p-3 flex gap-2 items-end shrink-0">
       <textarea id="chat-input" rows="1"
-        placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"></textarea>
-      <button id="send-btn" class="btn-primary send-btn">전송</button>
+                placeholder="질문을 입력하세요   (Enter 전송 · Shift+Enter 줄바꿈)"
+                class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none max-h-32 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none"></textarea>
+      <button id="send-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 rounded-lg h-[42px] shrink-0">전송</button>
     </div>
   </div>
 

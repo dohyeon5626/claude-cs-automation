@@ -23,16 +23,6 @@
     );
   }
 
-  // Stable color picker for service icons / chat header
-  const ICON_PALETTE = [
-    "#5667ff", "#10b981", "#f59e0b", "#ef4444",
-    "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16",
-  ];
-  function colorFor(id) {
-    let h = 0;
-    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-    return ICON_PALETTE[h % ICON_PALETTE.length];
-  }
   function initialOf(name) {
     return (name || "?").trim().charAt(0).toUpperCase() || "?";
   }
@@ -194,9 +184,11 @@
 
   function addUserMessage(text) {
     const row = document.createElement("div");
-    row.className = "msg-row user";
+    row.className = "flex justify-end";
     const bubble = document.createElement("div");
-    bubble.className = "bubble user";
+    bubble.className =
+      "bg-indigo-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 " +
+      "max-w-[78%] whitespace-pre-wrap text-sm";
     bubble.textContent = text;
     row.appendChild(bubble);
     $("messages").appendChild(row);
@@ -205,9 +197,11 @@
 
   function addBotMessage(md) {
     const row = document.createElement("div");
-    row.className = "msg-row bot";
+    row.className = "flex";
     const bubble = document.createElement("div");
-    bubble.className = "bubble bot";
+    bubble.className =
+      "bg-white border border-slate-200 rounded-2xl rounded-bl-md " +
+      "px-4 py-3 max-w-[82%] text-sm bot-content";
     bubble.innerHTML = renderMarkdown(md);
     row.appendChild(bubble);
     $("messages").appendChild(row);
@@ -216,9 +210,11 @@
 
   function addErrorMessage(text) {
     const row = document.createElement("div");
-    row.className = "msg-row bot";
+    row.className = "flex";
     const bubble = document.createElement("div");
-    bubble.className = "bubble error";
+    bubble.className =
+      "bg-red-50 border border-red-200 text-red-600 " +
+      "rounded-xl px-4 py-3 max-w-[82%] text-sm";
     bubble.textContent = text;
     row.appendChild(bubble);
     $("messages").appendChild(row);
@@ -229,11 +225,14 @@
     if (document.getElementById("typing-bubble")) return;
     const row = document.createElement("div");
     row.id = "typing-bubble";
-    row.className = "msg-row bot";
+    row.className = "flex";
     row.innerHTML =
-      '<div class="bubble bot typing">' +
-      '<span class="dot"></span><span class="dot"></span><span class="dot"></span>' +
-      '</div>';
+      '<div class="bg-white border border-slate-200 rounded-2xl rounded-bl-md ' +
+      'px-5 py-4 flex gap-1.5 items-center">' +
+      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot"></span>' +
+      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot" style="animation-delay:0.16s"></span>' +
+      '<span class="w-1.5 h-1.5 bg-slate-400 rounded-full typing-dot" style="animation-delay:0.32s"></span>' +
+      "</div>";
     $("messages").appendChild(row);
     scrollMessages();
   }
@@ -276,26 +275,30 @@
 
     state.services.forEach((svc) => {
       const card = document.createElement("div");
-      card.className = "service-card";
+      card.className =
+        "bg-white border border-slate-200 rounded-lg p-4 " +
+        "flex items-center gap-4 cursor-pointer transition " +
+        "hover:border-indigo-400 hover:bg-slate-50";
 
       const icon = document.createElement("div");
-      icon.className = "service-card-icon";
-      icon.style.background = colorFor(svc.id);
+      icon.className =
+        "w-10 h-10 rounded-lg bg-indigo-600 text-white " +
+        "font-semibold flex items-center justify-center shrink-0";
       icon.textContent = initialOf(svc.name);
 
       const textBox = document.createElement("div");
-      textBox.className = "service-card-text";
+      textBox.className = "flex-1 min-w-0";
       const name = document.createElement("div");
-      name.className = "service-card-name";
+      name.className = "font-medium text-sm";
       name.textContent = svc.name;
       const desc = document.createElement("div");
-      desc.className = "service-card-desc";
+      desc.className = "text-xs text-slate-500 truncate mt-0.5";
       desc.textContent = svc.description || "";
       textBox.appendChild(name);
       textBox.appendChild(desc);
 
       const arrow = document.createElement("div");
-      arrow.className = "service-card-arrow";
+      arrow.className = "text-slate-400 text-xl";
       arrow.textContent = "›";
 
       card.appendChild(icon);
@@ -365,11 +368,6 @@
       case "service_selected":
         state.currentService = { id: msg.service_id, name: msg.service_name };
         $("chat-service").textContent = msg.service_name;
-        const dot = document.querySelector(".mini-logo");
-        if (dot) {
-          dot.style.background = colorFor(msg.service_id);
-          dot.textContent = initialOf(msg.service_name);
-        }
         clearMessages();
         hideTypingBubble();
         setStatus("");
