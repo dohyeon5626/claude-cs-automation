@@ -24,7 +24,7 @@ services:
     description: "서버리스 프로젝트"
     # logo 가 비어 있으면 서비스 이름 첫 글자로 자동 아이콘이 만들어집니다.
     # 채우면 URL 또는 로컬 경로 사용 가능.
-    logo: ""
+    logo: "https://private-user-images.githubusercontent.com/67463759/530542679-38618fea-ad8a-461c-b618-a485f844e35d.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3Nzk1MDY5MjcsIm5iZiI6MTc3OTUwNjYyNywicGF0aCI6Ii82NzQ2Mzc1OS81MzA1NDI2NzktMzg2MThmZWEtYWQ4YS00NjFjLWI2MTgtYTQ4NWY4NDRlMzVkLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNjA1MjMlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYwNTIzVDAzMjM0N1omWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTJjNGY1YjdhYzQxODg3MjZjNGMwMTE2MmFjYzVlMGM1MTMwMmUwMjI0N2ViOTY5YTliYjEyZGRhNWYyNWE5MmUmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JnJlc3BvbnNlLWNvbnRlbnQtdHlwZT1pbWFnZSUyRnBuZyJ9.22kpE_85edXINxv11eJiHkslhxFiuxOQz0gi7GM5Ud4"
     github:
       url: "https://github.com/dohyeon5626/serverless-functions"
       branch: "main"

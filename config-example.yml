@@ -1,22 +1,36 @@
 # ─────────────────────────────────────────────────────────────
-#  CS Automation 설정 파일
+#  CS Automation 설정 파일 (예시)
+#
+#  이 파일을 그대로 config.yml 로 복사한 뒤 값을 채워 사용하세요.
 # ─────────────────────────────────────────────────────────────
 
 server:
   port: 8765             # 웹 접속 포트 (같은 WiFi의 다른 PC에서 이 포트로 접속)
 
+
+# ── 브랜드 ─────────────────────────────────────────────────────
+# 사이드바·로그인 화면에 표시되는 이름과 로고입니다. (선택 사항)
+brand:
+  name: "CS Automation"  # 사이드바/로그인에 표시될 이름
+  logo: ""               # 이미지 URL("https://...") 또는 로컬 경로("./assets/logo.png")
+                         # 비우면 brand.name 의 첫 글자가 그라데이션 사각형 안에 표시됩니다.
+
+
+# ── Claude CLI ─────────────────────────────────────────────────
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
-# path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
+  # path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
 
 
 # ── 서비스 ─────────────────────────────────────────────────────
 # 서비스마다 자기 데이터베이스와 GitHub 레포를 각각 설정합니다.
-# database 는 선택 사항입니다 — 없으면 Claude가 레포 코드/문서만 보고 답합니다.
+#   database 는 선택 사항 — 없으면 Claude 가 레포 코드/문서만 보고 답합니다.
+#   logo 도 선택 사항 — 없으면 서비스 이름 첫 글자가 파스텔 아이콘으로 표시됩니다.
 services:
   - id: "order"
     name: "주문 서비스"
     description: "주문 조회 및 배송 상태 확인"
+    logo: ""             # URL 또는 로컬 경로. 비우면 파스텔 첫 글자 아이콘 자동 생성
     github:
       url: "https://github.com/yourorg/order-service"
       branch: "main"
@@ -30,6 +44,7 @@ services:
   - id: "knowledge"
     name: "지식 베이스"
     description: "사내 매뉴얼/문서 검색 (DB 없음)"
+    # logo: "./assets/knowledge.png"     # 로컬 이미지 사용 예시
     github:
       url: "https://github.com/yourorg/knowledge-base"
       branch: "main"
