@@ -111,7 +111,7 @@ def main():
 
     auth = Authenticator(config.users, config.services)
     agent = ClaudeAgent(model=config.claude_model, binary=config.claude_binary)
-    server = WebServer(agent=agent, auth=auth, services=services)
+    server = WebServer(config=config, agent=agent, auth=auth, services=services)
 
     port = config.port
     lan_ip = _get_lan_ip()

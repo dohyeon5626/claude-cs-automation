@@ -1,4 +1,5 @@
 import asyncio
+import html as _html
 import json
 import logging
 from pathlib import Path
@@ -8,6 +9,7 @@ from aiohttp import WSMsgType, web
 
 from .agent import ClaudeAgent, UserSession
 from .auth import Authenticator
+from .config import AppConfig
 from .service import Service
 
 logger = logging.getLogger(__name__)
@@ -20,10 +22,12 @@ class WebServer:
 
     def __init__(
         self,
+        config: AppConfig,
         agent: ClaudeAgent,
         auth: Authenticator,
         services: Dict[str, Service],
     ):
+        self._config = config
         self._agent = agent
         self._auth = auth
         self._services = services
@@ -46,7 +50,14 @@ class WebServer:
     # ── Static files ──────────────────────────────────────────────────────────
 
     async def _serve_index(self, request):
-        return web.FileResponse(_WEB_DIR / "index.html")
+        # Render the brand placeholders from config.yml on each request
+        template = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+        rendered = (
+            template
+            .replace("{{BRAND_NAME}}", _html.escape(self._config.brand_name))
+            .replace("{{BRAND_MARK}}", _html.escape(self._config.brand_mark))
+        )
+        return web.Response(text=rendered, content_type="text/html")
 
     async def _serve_css(self, request):
         return web.FileResponse(_WEB_DIR / "style.css")

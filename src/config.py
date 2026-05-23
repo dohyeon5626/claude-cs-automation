@@ -47,6 +47,8 @@ class AppConfig:
     port: int
     claude_model: str
     claude_binary: str  # 'claude' (PATH 사용) 또는 절대 경로
+    brand_name: str     # 사이드바/로그인에 표시되는 이름
+    brand_mark: str     # 로고 그라데이션 안에 표시되는 글자 (1~3자 권장)
     services: List[ServiceConfig] = field(default_factory=list)
     users: List[UserConfig] = field(default_factory=list)
 
@@ -80,11 +82,14 @@ def load_config(path: str = "config.yml") -> AppConfig:
         )
 
     claude_section = raw.get("claude") or {}
+    brand_section = raw.get("brand") or {}
 
     return AppConfig(
         port=int(raw["server"]["port"]),
         claude_model=str(claude_section.get("model", "") or ""),
         claude_binary=str(claude_section.get("path", "") or "claude"),
+        brand_name=str(brand_section.get("name", "") or "CS Automation"),
+        brand_mark=str(brand_section.get("mark", "") or "CS"),
         services=services,
         users=users,
     )

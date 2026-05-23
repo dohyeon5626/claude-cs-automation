@@ -5,6 +5,10 @@
 server:
   port: 8765             # 웹 접속 포트 (같은 WiFi의 다른 PC에서 이 포트로 접속)
 
+brand:
+  name: "CS Automation"  # 사이드바/로그인에 표시될 이름
+  mark: "CS"             # 로고 그라데이션 안에 들어갈 글자 (1~3자 권장)
+
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
   path: "/Users/dohyeon5626/.vscode/extensions/anthropic.claude-code-2.1.145-darwin-arm64/resources/native-binary/claude"
