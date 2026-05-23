@@ -55,6 +55,8 @@ class WebServer:
                 web.get("/logo", self._serve_logo),
                 web.get("/service/{sid}/logo", self._serve_service_logo),
                 web.get("/favicon.ico", self._favicon),
+                web.get("/manifest.json", self._serve_manifest),
+                web.get("/sw.js", self._serve_sw),
                 web.post("/api/login", self._api_login),
                 web.post("/api/query", self._api_query),
                 web.get("/ws", self._handle_ws),
@@ -95,8 +97,34 @@ class WebServer:
         return f"/service/{svc_cfg.id}/logo"
 
     async def _serve_logo(self, request):
-        """Serve the configured local brand logo file."""
-        return _serve_local_file(self._config.brand_logo)
+        """
+        Serve the brand logo. Resolution order:
+          - http(s)://… → 302 redirect to the configured URL
+          - local path  → serve the file
+          - empty       → fall back to a generated SVG with the brand initial
+                          (keeps favicon, apple-touch-icon, and PWA icons
+                          working out of the box even with no logo set)
+        """
+        logo = (self._config.brand_logo or "").strip()
+        if logo and logo.startswith(("http://", "https://")):
+            raise web.HTTPFound(logo)
+        if logo:
+            return _serve_local_file(logo)
+
+        initial = _html.escape((self._config.brand_name.strip()[:1] or "?").upper())
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">'
+            '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+            '<stop offset="0%" stop-color="#8b5cf6"/>'
+            '<stop offset="100%" stop-color="#4f46e5"/>'
+            '</linearGradient></defs>'
+            '<rect width="192" height="192" rx="36" fill="url(#g)"/>'
+            f'<text x="96" y="128" font-family="system-ui, -apple-system, sans-serif" '
+            f'font-size="100" font-weight="700" text-anchor="middle" fill="white">'
+            f'{initial}</text>'
+            '</svg>'
+        )
+        return web.Response(text=svg, content_type="image/svg+xml")
 
     async def _serve_service_logo(self, request):
         """Serve a service's local logo file."""
@@ -126,13 +154,36 @@ class WebServer:
         return web.FileResponse(_WEB_DIR / "app.js")
 
     async def _favicon(self, request):
-        # If a brand logo is configured, use it as the favicon as well.
-        logo = (self._config.brand_logo or "").strip()
-        if not logo:
-            return web.Response(status=204)
-        if logo.startswith(("http://", "https://")):
-            raise web.HTTPFound(logo)
-        return _serve_local_file(logo)
+        # /logo always returns a usable image (logo or generated fallback)
+        return await self._serve_logo(request)
+
+    async def _serve_manifest(self, request):
+        """PWA manifest — dynamically built from the current brand config."""
+        name = self._config.brand_name
+        manifest = {
+            "name": name,
+            "short_name": name,
+            "description": f"{name} — CS 데이터 조회",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#0f172a",
+            "icons": [
+                {"src": "/logo", "sizes": "any",       "type": "image/svg+xml"},
+                {"src": "/logo", "sizes": "192x192",   "type": "image/png"},
+                {"src": "/logo", "sizes": "512x512",   "type": "image/png"},
+            ],
+        }
+        return web.json_response(manifest, content_type="application/manifest+json")
+
+    async def _serve_sw(self, request):
+        """Minimal service worker — required for PWA install eligibility."""
+        js = (
+            "self.addEventListener('install', e => self.skipWaiting());\n"
+            "self.addEventListener('activate', e => self.clients.claim());\n"
+            "self.addEventListener('fetch', () => {});\n"
+        )
+        return web.Response(text=js, content_type="application/javascript")
 
     # ── REST: login ───────────────────────────────────────────────────────────
 

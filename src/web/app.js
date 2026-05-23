@@ -626,4 +626,11 @@
   }
 
   initialize();
+
+  // PWA service worker — enables the "install app" prompt in browsers
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
+  }
 })();

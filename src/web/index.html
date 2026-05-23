@@ -4,14 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{BRAND_NAME}}</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="icon" href="/logo">
+  <link rel="apple-touch-icon" href="/logo">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{BRAND_NAME}}">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body class="bg-slate-50 text-slate-900 antialiased h-screen overflow-hidden">
+<body class="bg-slate-100 text-slate-900 antialiased h-screen overflow-hidden flex items-center justify-center">
 
   <!-- ── 로그인 ──────────────────────────────────────────────── -->
-  <div id="login-view" class="hidden h-screen flex items-center justify-center p-6">
-    <div class="bg-white border border-slate-200 rounded-2xl shadow-sm w-[400px] max-w-full p-8">
+  <div id="login-view" class="hidden">
+    <div class="bg-white border border-slate-200 rounded-2xl shadow-lg w-[400px] max-w-full p-8">
       <!-- Brand -->
       <div class="flex items-center gap-2.5 mb-7">
         {{BRAND_LOGO_LG}}
@@ -39,7 +49,7 @@
   </div>
 
   <!-- ── 메인 (사이드바 + 채팅) ──────────────────────────────── -->
-  <div id="app-view" class="hidden flex h-screen">
+  <div id="app-view" class="hidden w-full max-w-[1600px] h-full bg-white border-x border-slate-200 overflow-hidden flex">
 
     <!-- 사이드바 -->
     <aside class="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0">
