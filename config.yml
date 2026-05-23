@@ -3,8 +3,7 @@
 # ─────────────────────────────────────────────────────────────
 
 server:
-  host: "0.0.0.0"        # 0.0.0.0 이면 같은 네트워크의 다른 PC에서도 접속 가능
-  port: 8765
+  port: 8765             # 웹 접속 포트 (같은 WiFi의 다른 PC에서 이 포트로 접속)
 
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
@@ -12,19 +11,28 @@ claude:
 
 # ── 서비스 ─────────────────────────────────────────────────────
 # 서비스마다 자기 데이터베이스와 GitHub 레포를 각각 설정합니다.
+# database 는 선택 사항입니다 — 없으면 Claude가 레포 코드/문서만 보고 답합니다.
 services:
   - id: "order"
     name: "주문 서비스"
     description: "주문 조회 및 배송 상태 확인"
+    github:
+      url: "https://github.com/yourorg/order-service"
+      branch: "main"
     database:
       host: "localhost"
       port: 3306
       name: "order_db"
       user: "readonly_user"
       password: "db_password"
+
+  - id: "knowledge"
+    name: "지식 베이스"
+    description: "사내 매뉴얼/문서 검색 (DB 없음)"
     github:
-      url: "https://github.com/yourorg/order-service"
+      url: "https://github.com/yourorg/knowledge-base"
       branch: "main"
+    # database 없음 — 레포만 사용
 
 
 # ── 사용자 ─────────────────────────────────────────────────────
@@ -39,4 +47,4 @@ users:
   - id: "cs001"
     password: "changeme"
     name: "김상담"
-    services: ["order"]
+    services: ["order", "knowledge"]

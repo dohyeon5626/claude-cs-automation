@@ -116,9 +116,11 @@ class ClaudeAgent:
                 f"using existing checkout: {e}"
             )
 
-        # 2. Refresh the live database schema
-        status_callback("데이터베이스 스키마를 확인하고 있습니다...")
-        live_schema = db.get_schema()
+        # 2. Refresh the live database schema (skip if the service has no DB)
+        live_schema = None
+        if db is not None:
+            status_callback("데이터베이스 스키마를 확인하고 있습니다...")
+            live_schema = db.get_schema()
 
         # 3. Agentic loop
         turn_prompt = self._build_initial_prompt(service, live_schema, user_query)
@@ -139,6 +141,14 @@ class ClaudeAgent:
             action, payload = self._parse_action(reply)
 
             if action == "QUERY":
+                if db is None:
+                    # 서비스에 DB가 없으므로 ANSWER만 가능
+                    turn_prompt = (
+                        "이 서비스에는 데이터베이스가 없어 SQL 조회를 실행할 수 없습니다. "
+                        "레포지토리 탐색만으로 답변하세요. "
+                        "첫 줄을 ANSWER로 시작해 한국어 Markdown 답변을 작성해 주세요."
+                    )
+                    continue
                 preview = " ".join(payload.split())[:70]
                 status_callback(f"DB 조회 중: {preview}...")
                 turn_prompt = self._run_query(db, payload)
@@ -153,8 +163,51 @@ class ClaudeAgent:
     # ── Prompt building ───────────────────────────────────────────────────────
 
     def _build_initial_prompt(
-        self, service: Service, live_schema: str, user_query: str
+        self,
+        service: Service,
+        live_schema: Optional[str],
+        user_query: str,
     ) -> str:
+        if live_schema is None:
+            data_section = (
+                "## 데이터 출처\n"
+                "이 서비스에는 **데이터베이스가 없습니다.** "
+                "오직 레포의 코드/문서/설정만으로 답변하세요.\n"
+            )
+            action_section = (
+                "## 행동 규약\n"
+                "최종 답변은 다음 형식으로 작성하세요.\n"
+                "  - 첫 줄: ANSWER\n"
+                "  - 그 다음 줄부터: 한국어 Markdown 답변 (표, 요약 문장 등 활용)\n\n"
+                "(이 서비스에는 DB가 없으므로 QUERY 행동은 사용할 수 없습니다.)\n"
+            )
+            rules_section = (
+                "## 규칙\n"
+                "- 비밀번호, 카드번호 등 민감한 정보는 노출하지 마세요.\n"
+                "- 처리할 수 없는 요청이면 ANSWER로 사유를 한국어로 설명하세요.\n"
+            )
+        else:
+            data_section = (
+                f"## 데이터베이스 실시간 스키마\n{live_schema}\n"
+            )
+            action_section = (
+                "## 행동 규약 (매우 중요)\n"
+                "데이터베이스 데이터가 필요하면, 응답을 다음 형식으로 작성하세요.\n"
+                "  - 첫 줄: QUERY\n"
+                "  - 그 다음 줄부터: ```sql 코드 블록``` 안에 SELECT 쿼리\n"
+                "조회 결과는 다음 메시지로 전달됩니다. 필요하면 QUERY를 여러 번 반복할 수 있습니다.\n\n"
+                "충분한 정보를 얻었으면, CS 담당자가 고객에게 바로 안내할 수 있는 최종 답변을 작성하세요.\n"
+                "  - 첫 줄: ANSWER\n"
+                "  - 그 다음 줄부터: 한국어 Markdown 답변 (표, 요약 문장 등 활용)\n"
+            )
+            rules_section = (
+                "## 규칙\n"
+                "- SELECT 쿼리만 사용하세요. INSERT/UPDATE/DELETE/DROP/TRUNCATE는 절대 금지입니다.\n"
+                "- 비밀번호, 카드번호, 주민등록번호 등 민감한 정보는 조회하거나 노출하지 마세요.\n"
+                "- 전체 테이블 덤프처럼 과도하게 큰 요청은 거절하고 ANSWER로 사유를 설명하세요.\n"
+                "- 처리할 수 없는 요청이면 ANSWER로 사유를 한국어로 설명하세요.\n"
+            )
+
         return (
             "# CS 데이터 조회 요청\n\n"
             "당신은 CS(고객서비스) 팀을 지원하는 데이터 조회 어시스턴트입니다.\n"
@@ -163,21 +216,9 @@ class ClaudeAgent:
             f"## 담당 서비스\n"
             f"- 이름: {service.name}\n"
             f"- 설명: {service.description}\n\n"
-            f"## 데이터베이스 실시간 스키마\n"
-            f"{live_schema}\n\n"
-            "## 행동 규약 (매우 중요)\n"
-            "데이터베이스 데이터가 필요하면, 응답을 다음 형식으로 작성하세요.\n"
-            "  - 첫 줄: QUERY\n"
-            "  - 그 다음 줄부터: ```sql 코드 블록``` 안에 SELECT 쿼리\n"
-            "조회 결과는 다음 메시지로 전달됩니다. 필요하면 QUERY를 여러 번 반복할 수 있습니다.\n\n"
-            "충분한 정보를 얻었으면, CS 담당자가 고객에게 바로 안내할 수 있는 최종 답변을 작성하세요.\n"
-            "  - 첫 줄: ANSWER\n"
-            "  - 그 다음 줄부터: 한국어 Markdown 답변 (표, 요약 문장 등 활용)\n\n"
-            "## 규칙\n"
-            "- SELECT 쿼리만 사용하세요. INSERT/UPDATE/DELETE/DROP/TRUNCATE는 절대 금지입니다.\n"
-            "- 비밀번호, 카드번호, 주민등록번호 등 민감한 정보는 조회하거나 노출하지 마세요.\n"
-            "- 전체 테이블 덤프처럼 과도하게 큰 요청은 거절하고 ANSWER로 사유를 설명하세요.\n"
-            "- 처리할 수 없는 요청이면 ANSWER로 사유를 한국어로 설명하세요.\n\n"
+            f"{data_section}\n"
+            f"{action_section}\n"
+            f"{rules_section}\n"
             f"## CS 담당자 질문\n{user_query}"
         )
 

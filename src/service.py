@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from .config import ServiceConfig
 from .database import Database
@@ -8,11 +9,12 @@ from .database import Database
 class Service:
     """
     A ready-to-use service: its config bundled with a live database
-    connection. Built once at startup, after validation passes.
+    connection (if the service has one). Built once at startup, after
+    validation passes.
     """
 
     config: ServiceConfig
-    database: Database
+    database: Optional[Database] = None  # None 이면 DB 없는 서비스
 
     @property
     def id(self) -> str:

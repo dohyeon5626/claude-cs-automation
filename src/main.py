@@ -1,6 +1,7 @@
 import logging
+import socket
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 from aiohttp import web
 
@@ -24,6 +25,21 @@ def _fail(message: str):
     print("실패")
     print(f"\n오류: {message}")
     sys.exit(1)
+
+
+def _get_lan_ip() -> str:
+    """
+    Return the LAN IP that other devices on the same network would use
+    to reach this machine. Picks a route without actually sending packets.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 def run_startup_checks(config: AppConfig) -> Dict[str, Service]:
@@ -60,19 +76,23 @@ def run_startup_checks(config: AppConfig) -> Dict[str, Service]:
         except RuntimeError as e:
             _fail(str(e))
 
-        print("  - 데이터베이스 연결...", end=" ", flush=True)
-        try:
-            database = Database(svc.database)
-            print("OK")
-        except RuntimeError as e:
-            _fail(str(e))
+        database: Optional[Database] = None
+        if svc.database is None:
+            print("  - 데이터베이스 없음 (레포만 사용)")
+        else:
+            print("  - 데이터베이스 연결...", end=" ", flush=True)
+            try:
+                database = Database(svc.database)
+                print("OK")
+            except RuntimeError as e:
+                _fail(str(e))
 
-        print("  - 스키마 분석...", end=" ", flush=True)
-        try:
-            database.get_schema()
-            print("OK")
-        except RuntimeError as e:
-            _fail(str(e))
+            print("  - 스키마 분석...", end=" ", flush=True)
+            try:
+                database.get_schema()
+                print("OK")
+            except RuntimeError as e:
+                _fail(str(e))
 
         services[svc.id] = Service(config=svc, database=database)
 
@@ -94,15 +114,16 @@ def main():
     server = WebServer(agent=agent, auth=auth, services=services)
 
     port = config.port
-    print("CS 담당자는 웹 브라우저에서 아래 주소로 접속하세요:")
-    print(f"  - 이 PC에서:     http://localhost:{port}")
-    print(f"  - 같은 네트워크: http://<이 PC의 IP주소>:{port}")
+    lan_ip = _get_lan_ip()
+    print("CS 담당자는 아래 주소로 웹 브라우저에서 접속하세요:")
+    print(f"  - 이 PC에서:           http://localhost:{port}")
+    print(f"  - 같은 WiFi의 다른 PC: http://{lan_ip}:{port}")
     print(f"\n사용자 {len(config.users)}명 · 서비스 {len(config.services)}개 로드됨.")
     print("종료하려면 Ctrl+C 를 누르세요.\n")
 
     web.run_app(
         server.build_app(),
-        host=config.host,
+        host="0.0.0.0",
         port=port,
         print=lambda *args: None,
     )
