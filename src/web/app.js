@@ -1,21 +1,25 @@
 (function () {
   "use strict";
 
+  // ── State ────────────────────────────────────────────────────────────────
   const state = {
     token: null,
     userName: "",
-    services: [],
-    currentService: null,
+    services: [],         // [{id, name, description}]
+    currentService: null, // {id, name}
     ws: null,
     sending: false,
   };
 
-  const $ = (id) => document.getElementById(id);
-  const views = {
-    login: $("login-view"),
-    service: $("service-view"),
-    chat: $("chat-view"),
+  const STORE = {
+    token: "cs_token",
+    userName: "cs_user_name",
+    services: "cs_services",
+    lastService: "cs_last_service",
   };
+
+  const $ = (id) => document.getElementById(id);
+  const views = { login: $("login-view"), app: $("app-view") };
 
   function showView(name) {
     Object.keys(views).forEach((k) =>
@@ -23,12 +27,23 @@
     );
   }
 
-  function initialOf(name) {
-    return (name || "?").trim().charAt(0).toUpperCase() || "?";
+  function saveAuth() {
+    localStorage.setItem(STORE.token, state.token);
+    localStorage.setItem(STORE.userName, state.userName);
+    localStorage.setItem(STORE.services, JSON.stringify(state.services));
+  }
+  function clearAuth() {
+    state.token = null;
+    state.userName = "";
+    state.services = [];
+    state.currentService = null;
+    localStorage.removeItem(STORE.token);
+    localStorage.removeItem(STORE.userName);
+    localStorage.removeItem(STORE.services);
+    localStorage.removeItem(STORE.lastService);
   }
 
-  // ── Minimal, XSS-safe Markdown renderer ────────────────────────────────────
-
+  // ── Minimal, XSS-safe Markdown renderer ─────────────────────────────────
   function escapeHtml(s) {
     return s
       .replace(/&/g, "&amp;")
@@ -37,7 +52,6 @@
   }
 
   function renderInline(s) {
-    // `s` is already HTML-escaped
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
@@ -53,12 +67,8 @@
     let html = "";
     let i = 0;
     let listType = null;
-
     const closeList = () => {
-      if (listType) {
-        html += "</" + listType + ">";
-        listType = null;
-      }
+      if (listType) { html += "</" + listType + ">"; listType = null; }
     };
     const parseRow = (l) =>
       l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
@@ -66,21 +76,19 @@
     while (i < lines.length) {
       const line = lines[i];
 
-      // fenced code block
       if (line.trim().startsWith("```")) {
         closeList();
         i++;
         let code = "";
         while (i < lines.length && !lines[i].trim().startsWith("```")) {
           code += lines[i] + "\n";
-        i++;
+          i++;
         }
         i++;
         html += "<pre><code>" + code.replace(/\n$/, "") + "</code></pre>";
         continue;
       }
 
-      // table
       if (
         line.includes("|") &&
         i + 1 < lines.length &&
@@ -105,7 +113,6 @@
         continue;
       }
 
-      // heading
       const hm = line.match(/^(#{1,4})\s+(.*)$/);
       if (hm) {
         closeList();
@@ -115,40 +122,28 @@
         continue;
       }
 
-      // unordered list
       const um = line.match(/^\s*[-*]\s+(.*)$/);
       if (um) {
-        if (listType !== "ul") {
-          closeList();
-          html += "<ul>";
-          listType = "ul";
-        }
+        if (listType !== "ul") { closeList(); html += "<ul>"; listType = "ul"; }
         html += "<li>" + renderInline(um[1]) + "</li>";
         i++;
         continue;
       }
 
-      // ordered list
       const om = line.match(/^\s*\d+\.\s+(.*)$/);
       if (om) {
-        if (listType !== "ol") {
-          closeList();
-          html += "<ol>";
-          listType = "ol";
-        }
+        if (listType !== "ol") { closeList(); html += "<ol>"; listType = "ol"; }
         html += "<li>" + renderInline(om[1]) + "</li>";
         i++;
         continue;
       }
 
-      // blank line
       if (line.trim() === "") {
         closeList();
         i++;
         continue;
       }
 
-      // paragraph
       closeList();
       let para = line;
       i++;
@@ -166,17 +161,12 @@
       }
       html += "<p>" + renderInline(para) + "</p>";
     }
-
     closeList();
     return html;
   }
 
-  // ── Chat rendering ─────────────────────────────────────────────────────────
-
-  function clearMessages() {
-    $("messages").innerHTML = "";
-  }
-
+  // ── Chat rendering ───────────────────────────────────────────────────────
+  function clearMessages() { $("messages").innerHTML = ""; }
   function scrollMessages() {
     const m = $("messages");
     m.scrollTop = m.scrollHeight;
@@ -244,79 +234,58 @@
 
   function setStatus(text) {
     const s = $("status-line");
-    if (text) {
-      s.textContent = text;
-      s.classList.remove("hidden");
-    } else {
-      s.textContent = "";
-      s.classList.add("hidden");
-    }
+    if (text) { s.textContent = text; s.classList.remove("hidden"); }
+    else      { s.textContent = "";   s.classList.add("hidden"); }
   }
 
   function setSending(sending) {
     state.sending = sending;
-    $("send-btn").disabled = sending;
-    $("chat-input").disabled = sending;
-    if (!sending) $("chat-input").focus();
+    updateInputAvailable();
+    if (!sending && state.currentService) $("chat-input").focus();
   }
 
-  // ── Service rendering ──────────────────────────────────────────────────────
+  function updateInputAvailable() {
+    const ready = !!state.currentService && !state.sending;
+    $("chat-input").disabled = !ready;
+    $("send-btn").disabled = !ready;
+  }
 
-  function renderServices() {
+  // ── Service sidebar ──────────────────────────────────────────────────────
+  function renderServiceList() {
     const list = $("service-list");
     list.innerHTML = "";
-
     if (state.services.length === 0) {
-      $("service-hint").textContent =
-        "접근 가능한 서비스가 없습니다. 관리자에게 문의하세요.";
+      list.innerHTML =
+        '<div class="text-xs text-slate-400 px-3 py-2">접근 가능한 서비스가 없습니다.</div>';
       return;
     }
-    $("service-hint").textContent = "담당하실 서비스를 선택하세요";
-
     state.services.forEach((svc) => {
-      const card = document.createElement("div");
-      card.className =
-        "bg-white border border-slate-200 rounded-lg p-4 " +
-        "flex items-center gap-4 cursor-pointer transition " +
-        "hover:border-indigo-400 hover:bg-slate-50";
+      const btn = document.createElement("button");
+      btn.dataset.serviceId = svc.id;
+      btn.title = svc.description || "";
+      btn.textContent = svc.name;
+      btn.addEventListener("click", () => selectService(svc.id));
+      list.appendChild(btn);
+    });
+    updateServiceHighlight();
+  }
 
-      const icon = document.createElement("div");
-      icon.className =
-        "w-10 h-10 rounded-lg bg-indigo-600 text-white " +
-        "font-semibold flex items-center justify-center shrink-0";
-      icon.textContent = initialOf(svc.name);
-
-      const textBox = document.createElement("div");
-      textBox.className = "flex-1 min-w-0";
-      const name = document.createElement("div");
-      name.className = "font-medium text-sm";
-      name.textContent = svc.name;
-      const desc = document.createElement("div");
-      desc.className = "text-xs text-slate-500 truncate mt-0.5";
-      desc.textContent = svc.description || "";
-      textBox.appendChild(name);
-      textBox.appendChild(desc);
-
-      const arrow = document.createElement("div");
-      arrow.className = "text-slate-400 text-xl";
-      arrow.textContent = "›";
-
-      card.appendChild(icon);
-      card.appendChild(textBox);
-      card.appendChild(arrow);
-      card.addEventListener("click", () => {
-        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-          state.ws.send(
-            JSON.stringify({ type: "select_service", service_id: svc.id })
-          );
-        }
-      });
-      list.appendChild(card);
+  function updateServiceHighlight() {
+    document.querySelectorAll("#service-list button").forEach((b) => {
+      const active = state.currentService && b.dataset.serviceId === state.currentService.id;
+      b.className = active
+        ? "w-full text-left px-3 py-2 rounded-md text-sm font-medium bg-indigo-50 text-indigo-700 truncate"
+        : "w-full text-left px-3 py-2 rounded-md text-sm text-slate-700 hover:bg-slate-100 transition truncate";
     });
   }
 
-  // ── WebSocket ──────────────────────────────────────────────────────────────
+  function selectService(id) {
+    if (state.currentService && state.currentService.id === id) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    state.ws.send(JSON.stringify({ type: "select_service", service_id: id }));
+  }
 
+  // ── WebSocket ────────────────────────────────────────────────────────────
   function connectWebSocket() {
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
     const ws = new WebSocket(proto + location.host + "/ws");
@@ -327,57 +296,42 @@
     };
     ws.onmessage = (ev) => {
       let msg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch (e) {
-        return;
-      }
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
       handleServerMessage(msg);
     };
     ws.onclose = () => handleDisconnect();
     ws.onerror = () => {};
   }
 
-  function handleDisconnect() {
-    if (!state.token) return;
-    if (!views.chat.classList.contains("hidden")) {
-      hideTypingBubble();
-      addErrorMessage("서버와의 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
-      setStatus("");
-      setSending(false);
-    } else if (!views.login.classList.contains("hidden")) {
-      enableLoginButton();
-      $("login-error").textContent = "서버와의 연결이 끊어졌습니다.";
-    }
-  }
-
   function handleServerMessage(msg) {
     switch (msg.type) {
-      case "auth_success":
-        $("service-user").textContent = state.userName + " 님";
-        renderServices();
-        showView("service");
+      case "auth_success": {
+        // Auto-select last-used (or first) service
+        const last = localStorage.getItem(STORE.lastService);
+        const pick = state.services.find((s) => s.id === last) || state.services[0];
+        if (pick && !state.currentService) selectService(pick.id);
         break;
+      }
 
       case "auth_error":
-        $("login-error").textContent = msg.message || "인증에 실패했습니다.";
-        enableLoginButton();
+        clearAuth();
         showView("login");
+        $("login-error").textContent =
+          msg.message || "세션이 만료되었습니다. 다시 로그인하세요.";
+        enableLoginButton();
+        $("login-id").focus();
         break;
 
       case "service_selected":
         state.currentService = { id: msg.service_id, name: msg.service_name };
+        localStorage.setItem(STORE.lastService, msg.service_id);
         $("chat-service").textContent = msg.service_name;
+        updateServiceHighlight();
         clearMessages();
         hideTypingBubble();
         setStatus("");
         setSending(false);
-        addBotMessage(
-          "**" +
-            msg.service_name +
-            "** 서비스에 연결되었습니다.\n\n조회하실 내용을 자연어로 입력해 보세요."
-        );
-        showView("chat");
+        addBotMessage("**" + msg.service_name + "** — 질문을 입력해 보세요.");
         $("chat-input").focus();
         break;
 
@@ -393,20 +347,38 @@
         break;
 
       case "error":
-        if (!views.chat.classList.contains("hidden")) {
+        if (!views.app.classList.contains("hidden")) {
           hideTypingBubble();
           setStatus("");
           setSending(false);
           addErrorMessage(msg.message || "오류가 발생했습니다.");
-        } else {
-          $("service-hint").textContent = msg.message || "오류가 발생했습니다.";
         }
         break;
     }
   }
 
-  // ── Login ──────────────────────────────────────────────────────────────────
+  function handleDisconnect() {
+    if (!state.token) return;
+    if (!views.app.classList.contains("hidden")) {
+      if (!state.currentService) {
+        // never reached a working state — bounce back to login
+        clearAuth();
+        showView("login");
+        enableLoginButton();
+        $("login-error").textContent = "서버와 연결할 수 없습니다.";
+      } else {
+        hideTypingBubble();
+        addErrorMessage("서버와의 연결이 끊어졌습니다. 페이지를 새로고침해 주세요.");
+        setStatus("");
+        setSending(false);
+      }
+    } else if (!views.login.classList.contains("hidden")) {
+      enableLoginButton();
+      $("login-error").textContent = "서버와의 연결이 끊어졌습니다.";
+    }
+  }
 
+  // ── Login / logout ───────────────────────────────────────────────────────
   function enableLoginButton() {
     const btn = $("login-form").querySelector("button");
     btn.disabled = false;
@@ -424,7 +396,6 @@
       errEl.textContent = "아이디와 비밀번호를 입력하세요.";
       return;
     }
-
     errEl.textContent = "";
     btn.disabled = true;
     btn.textContent = "로그인 중...";
@@ -444,6 +415,8 @@
       state.token = data.token;
       state.userName = data.user_name;
       state.services = data.services || [];
+      saveAuth();
+      enterApp();
       connectWebSocket();
     } catch (err) {
       errEl.textContent = "서버에 연결할 수 없습니다.";
@@ -451,34 +424,19 @@
     }
   });
 
-  // ── Logout / navigation ────────────────────────────────────────────────────
-
   function logout() {
-    if (state.ws) {
-      try {
-        state.ws.close();
-      } catch (e) {}
-    }
-    state.token = null;
+    if (state.ws) { try { state.ws.close(); } catch (e) {} }
     state.ws = null;
-    state.currentService = null;
-    state.services = [];
+    clearAuth();
     $("login-pw").value = "";
     $("login-error").textContent = "";
     enableLoginButton();
     showView("login");
     $("login-id").focus();
   }
-
   $("logout-btn").addEventListener("click", logout);
-  $("chat-logout-btn").addEventListener("click", logout);
-  $("change-service-btn").addEventListener("click", () => {
-    renderServices();
-    showView("service");
-  });
 
-  // ── Sending queries ────────────────────────────────────────────────────────
-
+  // ── Sending queries ──────────────────────────────────────────────────────
   function autoGrow(el) {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 140) + "px";
@@ -486,6 +444,7 @@
 
   function sendQuery() {
     if (state.sending) return;
+    if (!state.currentService) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       addErrorMessage("서버와 연결되어 있지 않습니다. 페이지를 새로고침해 주세요.");
       return;
@@ -512,6 +471,39 @@
   });
   $("chat-input").addEventListener("input", (e) => autoGrow(e.target));
 
-  // ── Init ───────────────────────────────────────────────────────────────────
-  $("login-id").focus();
+  // ── Entry into the app shell (after login or after restoring from storage) ──
+  function enterApp() {
+    $("user-name").textContent = state.userName;
+    renderServiceList();
+    clearMessages();
+    setStatus("");
+    state.currentService = null;
+    $("chat-service").textContent = "서비스를 선택하세요";
+    updateInputAvailable();
+    showView("app");
+  }
+
+  // ── Initialize ───────────────────────────────────────────────────────────
+  function initialize() {
+    const token = localStorage.getItem(STORE.token);
+    if (!token) {
+      showView("login");
+      $("login-id").focus();
+      return;
+    }
+    // Restore from localStorage and try to re-auth via WebSocket.
+    // If the token is no longer valid (e.g. server restarted), auth_error
+    // will bounce us back to the login screen.
+    state.token = token;
+    state.userName = localStorage.getItem(STORE.userName) || "";
+    try {
+      state.services = JSON.parse(localStorage.getItem(STORE.services) || "[]");
+    } catch (e) {
+      state.services = [];
+    }
+    enterApp();
+    connectWebSocket();
+  }
+
+  initialize();
 })();
