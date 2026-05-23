@@ -1,12 +1,12 @@
 # CS Automation
 
-![License](https://img.shields.io/github/license/dohyeon5626/claude-cs-automation?style=flat&color=green) ![Powered by Claude](https://img.shields.io/badge/Powered_by-Claude-cc785c?style=flat)
+![License](https://img.shields.io/github/license/dohyeon5626/claude-cs-automation?style=flat&color=green) ![GitHub Tag](https://img.shields.io/github/v/tag/dohyeon5626/claude-cs-automation?style=flat&color=green) ![Powered by Claude](https://img.shields.io/badge/Powered_by-Claude-cc785c?style=flat)
 <br/>
 
 CS 담당자가 **웹에서 자연어로 질문**하면, Claude 가 깃허브 코드와 데이터베이스를 조회해 답을 정리해 주는 시스템입니다.<br/>
 예) "어제 주문 중 배송 안 된 건 몇 개야?" → SQL 자동 생성 → DB 조회 → 표로 정리해 답변<br/>
 예) "이 기능 어떻게 설정돼 있지?" → 레포 코드 탐색 → 답변<br/>
-개발자가 매번 사소한 질문에 답하느라 드는 시간을 줄이려고 만들었습니다. 회사에서 일할 때 자기 PC 에 켜 두기만 하면 됩니다.<br/>
+개발자가 매번 사소한 질문에 답하느라 드는 시간을 줄이려고 만들었습니다. 이 레포지토리를 다운받아 설정한 뒤, 회사에서 일할 때 자기 PC 에 켜 두기만 하면 됩니다.<br/>
 
 
 ---
