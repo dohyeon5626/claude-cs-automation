@@ -22,22 +22,24 @@ _MAX_RESULT_CHARS = 20000
 _SQL_BLOCK_RE = re.compile(r"```sql\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
-def check_claude_cli(model: str):
+def check_claude_cli(model: str, binary: str = "claude"):
     """
     Verify the Claude CLI is installed and authenticated.
+    `binary` is the command name or absolute path of the claude executable.
     Raises RuntimeError on any failure (server must not start).
     """
     try:
         version = subprocess.run(
-            ["claude", "--version"],
+            [binary, "--version"],
             capture_output=True,
             text=True,
             timeout=30,
         )
     except FileNotFoundError:
         raise RuntimeError(
-            "Claude CLI('claude' 명령)를 찾을 수 없습니다.\n"
-            "  Claude Code를 설치하고 PATH에 등록하세요: https://docs.claude.com/claude-code"
+            f"Claude CLI('{binary}')를 찾을 수 없습니다.\n"
+            "  - Claude Code 설치: https://docs.claude.com/claude-code\n"
+            "  - PATH 에 없다면 config.yml 의 claude.path 에 절대 경로를 지정하세요."
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Claude CLI 버전 확인 중 시간이 초과되었습니다.")
@@ -45,7 +47,7 @@ def check_claude_cli(model: str):
     if version.returncode != 0:
         raise RuntimeError(f"Claude CLI 실행 실패: {version.stderr.strip()}")
 
-    cmd = ["claude", "-p", "--output-format", "json"]
+    cmd = [binary, "-p", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
     try:
@@ -88,8 +90,9 @@ class ClaudeAgent:
     database and GitHub repository.
     """
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, binary: str = "claude"):
         self._model = model
+        self._binary = binary
 
     def process_query(
         self,
@@ -246,7 +249,7 @@ class ClaudeAgent:
         self, prompt: str, session_id: Optional[str], cwd: str
     ) -> Tuple[str, Optional[str]]:
         """Call the Claude CLI in print mode. Returns (reply_text, session_id)."""
-        cmd = ["claude", "-p", "--output-format", "json"]
+        cmd = [self._binary, "-p", "--output-format", "json"]
         if self._model:
             cmd += ["--model", self._model]
         if session_id:

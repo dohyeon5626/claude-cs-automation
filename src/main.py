@@ -60,7 +60,7 @@ def run_startup_checks(config: AppConfig) -> Dict[str, Service]:
 
     print("[공통] Claude CLI 확인...", end=" ", flush=True)
     try:
-        check_claude_cli(config.claude_model)
+        check_claude_cli(config.claude_model, config.claude_binary)
         print("OK")
     except RuntimeError as e:
         _fail(str(e))
@@ -110,7 +110,7 @@ def main():
     services = run_startup_checks(config)
 
     auth = Authenticator(config.users, config.services)
-    agent = ClaudeAgent(model=config.claude_model)
+    agent = ClaudeAgent(model=config.claude_model, binary=config.claude_binary)
     server = WebServer(agent=agent, auth=auth, services=services)
 
     port = config.port

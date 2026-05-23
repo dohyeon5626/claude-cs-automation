@@ -68,6 +68,7 @@ server:
 
 claude:
   model: "sonnet"
+  # path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
 
 # 서비스: 조회 대상마다 하나씩. database 는 선택 사항.
 services:

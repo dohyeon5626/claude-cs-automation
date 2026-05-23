@@ -7,19 +7,33 @@ server:
 
 claude:
   model: "sonnet"        # 비워두면 Claude CLI 기본 모델 사용
-  # path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
+# path: "/path/to/claude"   # PATH 에 'claude' 가 없으면 절대 경로 지정
 
 
 # ── 서비스 ─────────────────────────────────────────────────────
 # 서비스마다 자기 데이터베이스와 GitHub 레포를 각각 설정합니다.
 # database 는 선택 사항입니다 — 없으면 Claude가 레포 코드/문서만 보고 답합니다.
 services:
-  - id: "serverless"
-    name: "테스트"
-    description: "서버리스 프로젝트"
+  - id: "order"
+    name: "주문 서비스"
+    description: "주문 조회 및 배송 상태 확인"
     github:
-      url: "https://github.com/dohyeon5626/serverless-functions"
+      url: "https://github.com/yourorg/order-service"
       branch: "main"
+    database:
+      host: "localhost"
+      port: 3306
+      name: "order_db"
+      user: "readonly_user"
+      password: "db_password"
+
+  - id: "knowledge"
+    name: "지식 베이스"
+    description: "사내 매뉴얼/문서 검색 (DB 없음)"
+    github:
+      url: "https://github.com/yourorg/knowledge-base"
+      branch: "main"
+    # database 없음 — 레포만 사용
 
 
 # ── 사용자 ─────────────────────────────────────────────────────
@@ -27,6 +41,11 @@ services:
 #   services : 접근 가능한 서비스 id 목록. ["*"] 이면 모든 서비스 접근 가능
 users:
   - id: "admin"
-    password: "admin"
-    name: "테스트"
+    password: "changeme"
+    name: "관리자"
     services: ["*"]
+
+  - id: "cs001"
+    password: "changeme"
+    name: "김상담"
+    services: ["order", "knowledge"]

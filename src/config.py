@@ -46,6 +46,7 @@ class UserConfig:
 class AppConfig:
     port: int
     claude_model: str
+    claude_binary: str  # 'claude' (PATH 사용) 또는 절대 경로
     services: List[ServiceConfig] = field(default_factory=list)
     users: List[UserConfig] = field(default_factory=list)
 
@@ -83,6 +84,7 @@ def load_config(path: str = "config.yml") -> AppConfig:
     return AppConfig(
         port=int(raw["server"]["port"]),
         claude_model=str(claude_section.get("model", "") or ""),
+        claude_binary=str(claude_section.get("path", "") or "claude"),
         services=services,
         users=users,
     )
