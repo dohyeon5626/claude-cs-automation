@@ -1,6 +1,6 @@
 # CS Automation
 
-![License](https://img.shields.io/github/license/dohyeon5626/claude-cs-automation?style=flat&color=green) ![Python](https://img.shields.io/badge/python-3.11+-3776AB?style=flat&logo=python&logoColor=white) ![Powered by Claude](https://img.shields.io/badge/Powered_by-Claude-cc785c?style=flat) ![Tailwind](https://img.shields.io/badge/Tailwind-CDN-38B2AC?style=flat&logo=tailwindcss&logoColor=white)
+![License](https://img.shields.io/github/license/dohyeon5626/claude-cs-automation?style=flat&color=green) ![Powered by Claude](https://img.shields.io/badge/Powered_by-Claude-cc785c?style=flat)
 <br/>
 
 CS 담당자가 **웹에서 자연어로 질문**하면, Claude 가 깃허브 코드와 데이터베이스를 조회해 답을 정리해 주는 시스템입니다.<br/>
@@ -45,28 +45,29 @@ CS 담당자는 브라우저만 있으면 됩니다.
 ```
 
 ### 설정 (config.yml)
-모든 설정은 `config.yml` 하나에 들어갑니다. 
+`config.yml` 한 파일에서 아래 다섯 가지를 설정합니다.
+```
+- server     웹 접속 포트
+- brand      앱 이름·로고 (선택)
+- claude     Claude CLI 모델·경로
+- services   조회 대상 — GitHub 레포 필수, DB·로고 선택
+- users      로그인 계정과 서비스별 접근 권한
+```
+예시:
 ```yaml
 server:
-  port: 8765                # 웹 접속 포트
-
-brand:
-  name: "CS Automation"
-  logo: ""                  # URL 또는 로컬 경로. 비우면 이름 첫 글자 표시
+  port: 8765
 
 claude:
   model: "sonnet"
-  # path: "/path/to/claude" # 'claude' 가 PATH 에 없을 때만
 
 services:
   - id: "order"
     name: "주문 서비스"
-    description: "주문 조회 및 배송 상태 확인"
-    logo: ""                # 서비스별 로고 (선택)
     github:
       url: "https://github.com/yourorg/order-service"
       branch: "main"
-    database:               # 선택 — 없으면 레포 문서만 사용
+    database:
       host: "localhost"
       port: 3306
       name: "order_db"
@@ -76,9 +77,9 @@ services:
 users:
   - id: "admin"
     password: "changeme"
-    name: "관리자"
-    services: ["*"]         # ["*"] = 전체 접근
+    services: ["*"]
 ```
+brand, 서비스별 logo, 사용자별 services 권한 등 세부 옵션은 `config.yml` 의 주석에 정리되어 있습니다.
 
 ### CS 담당자 접속
 서버와 **같은 WiFi** 에 있는 PC라면 누구나 브라우저로 접속할 수 있습니다.<br/>
@@ -89,4 +90,11 @@ users:
 - 사이드바에서 서비스 선택 (마지막 사용 서비스 자동 선택됨)
 - Enter 전송 · Shift+Enter 줄바꿈
 ```
+서버를 실행하면 콘솔에 `http://192.168.x.x:8765` 형태로 IP 가 자동 표시됩니다. 그 주소를 그대로 동료에게 알려주면 됩니다. 수동으로 확인하고 싶다면:
+```
+- macOS    터미널에서  ipconfig getifaddr en0
+- Windows  cmd 에서   ipconfig  → "IPv4 주소" 항목
+- Linux    터미널에서  hostname -I
+```
+
 접속 안 될 때 → 같은 WiFi 인지, 방화벽이 포트(8765) 막고 있지 않은지 확인.
