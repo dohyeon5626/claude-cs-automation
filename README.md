@@ -113,3 +113,13 @@ brand, 서비스별 logo, 사용자별 services 권한 등 세부 옵션은 `con
 ```
 
 접속 안 될 때 → 같은 WiFi인지, 방화벽이 포트(8765) 막고 있지 않은지 확인.
+
+### 로그
+질문 1건당 한 줄씩 `log/queries.jsonl` 에 JSON Lines 로 기록됩니다 (디렉터리 자동 생성). 한 줄에 시각·유저·서비스·질문 원문·실행된 SQL·소요 시간이 모두 담깁니다.
+```json
+{"ts":"2026-05-24T16:18:03+09:00","user":"admin","service":"order","question":"...","answered":true,"iterations":2,"elapsed_ms":4123,"queries":[{"sql":"SELECT ...","rows":42,"ms":88,"error":null}],"answer_chars":850}
+```
+같은 디렉터리의 `log/stats.json` 에는 날짜별 누적 통계(총 질문 수·성공·실패·서비스별 카운트)가 함께 갱신됩니다.
+```json
+{"2026-05-24": {"total": 10, "answered": 8, "failed": 2, "by_service": {"order": 7, "knowledge": 3}}}
+```
