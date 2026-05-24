@@ -17,6 +17,9 @@ env/
 # Service repositories cloned at runtime
 repos/
 
+# Runtime audit log of CS questions and queries
+log/
+
 # IDE
 .vscode/
 .idea/

@@ -2,9 +2,11 @@ import json
 import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
+from .audit import log_query_event, now_iso
 from .repository import pull_repo
 from .service import Service
 
@@ -120,6 +122,9 @@ class ClaudeAgent:
         db = service.database
         repo_path = service.config.repo_path
 
+        started = time.monotonic()
+        queries_log: List[dict] = []
+
         # 1. Pull the repo (non-fatal: fall back to the existing checkout)
         status_callback("최신 코드 동기화 중...")
         try:
@@ -165,10 +170,24 @@ class ClaudeAgent:
                     continue
                 preview = " ".join(payload.split())[:70]
                 status_callback(f"데이터 조회 중 · {preview}")
-                turn_prompt = self._run_query(db, payload)
+                turn_prompt = self._run_query(db, payload, queries_log)
             else:  # ANSWER (or fallback)
+                _emit_audit(
+                    session, service, user_query, queries_log,
+                    iterations=iteration + 1,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    answered=True,
+                    answer_chars=len(payload),
+                )
                 return payload
 
+        _emit_audit(
+            session, service, user_query, queries_log,
+            iterations=_MAX_ITERATIONS,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            answered=False,
+            reason="max_iterations",
+        )
         return (
             "조회 단계가 너무 많아 처리를 중단했습니다. "
             "질문을 더 구체적으로 작성해 주세요."
@@ -319,12 +338,23 @@ class ClaudeAgent:
 
         return "ANSWER", stripped
 
-    def _run_query(self, db, sql: str) -> str:
+    def _run_query(self, db, sql: str, queries_log: Optional[List[dict]] = None) -> str:
         """Execute a SELECT query and build the next turn prompt."""
         if not sql:
+            if queries_log is not None:
+                queries_log.append({"sql": sql, "rows": None, "ms": 0, "error": "empty"})
             return self._query_error_prompt(sql, "SQL 쿼리가 비어 있습니다.")
+        started = time.monotonic()
         try:
             rows = db.execute_select(sql)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if queries_log is not None:
+                queries_log.append({
+                    "sql": sql,
+                    "rows": len(rows),
+                    "ms": elapsed_ms,
+                    "error": None,
+                })
             result_json = json.dumps(rows, ensure_ascii=False, default=str)
             if len(result_json) > _MAX_RESULT_CHARS:
                 result_json = (
@@ -333,4 +363,43 @@ class ClaudeAgent:
                 )
             return self._query_result_prompt(sql, result_json)
         except (ValueError, RuntimeError) as e:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if queries_log is not None:
+                queries_log.append({
+                    "sql": sql,
+                    "rows": None,
+                    "ms": elapsed_ms,
+                    "error": str(e),
+                })
             return self._query_error_prompt(sql, str(e))
+
+
+# ── Audit helper ──────────────────────────────────────────────────────────
+
+def _emit_audit(
+    session: UserSession,
+    service: Service,
+    question: str,
+    queries: List[dict],
+    *,
+    iterations: int,
+    elapsed_ms: int,
+    answered: bool,
+    answer_chars: int = 0,
+    reason: Optional[str] = None,
+):
+    entry = {
+        "ts": now_iso(),
+        "user": session.user_id,
+        "service": service.id,
+        "question": question,
+        "answered": answered,
+        "iterations": iterations,
+        "elapsed_ms": elapsed_ms,
+        "queries": queries,
+    }
+    if answered:
+        entry["answer_chars"] = answer_chars
+    if reason:
+        entry["reason"] = reason
+    log_query_event(entry)

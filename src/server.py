@@ -7,6 +7,7 @@ from typing import Dict
 
 from aiohttp import WSMsgType, web
 
+from . import audit
 from .agent import ClaudeAgent, UserSession
 from .auth import Authenticator
 from .config import AppConfig
@@ -384,6 +385,15 @@ class WebServer:
             await ws.send_json({"type": "response", "message": answer})
         except Exception as e:
             logger.error(f"Query processing error: {e}", exc_info=True)
+            audit.log_query_event({
+                "ts": audit.now_iso(),
+                "user": session.user_id,
+                "service": service.id,
+                "question": message,
+                "answered": False,
+                "reason": "error",
+                "error": str(e),
+            })
             await ws.send_json(
                 {"type": "error", "message": f"처리 중 오류가 발생했습니다: {e}"}
             )
