@@ -55,6 +55,24 @@ _CT_CSV = "text/csv; charset=utf-8"
 _CT_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+_SHELL_PATHS = frozenset({"/", "/app.js", "/style.css", "/sw.js", "/manifest.json"})
+
+
+@web.middleware
+async def _no_cache_for_shell(request, handler):
+    """
+    Tell the browser to revalidate the page shell on every request.
+    Without this, aiohttp's FileResponse omits Cache-Control entirely and the
+    browser caches app.js for hours — so newly shipped UI fixes look broken
+    until the user does a hard refresh. Revalidation is cheap (304 on no
+    change) and keeps correctness ahead of bandwidth for this internal tool.
+    """
+    resp = await handler(request)
+    if request.path in _SHELL_PATHS:
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
 def _sanitize_filename(name: str, default_ext: str = ".csv") -> str:
     """
     Normalize a download filename suggested by Claude. Strips path components,
@@ -166,7 +184,7 @@ class WebServer:
         self._downloads: Dict[str, Dict] = {}
 
     def build_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[_no_cache_for_shell])
         app.add_routes(
             [
                 web.get("/", self._serve_index),
