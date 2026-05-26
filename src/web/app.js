@@ -10,6 +10,7 @@
     currentService: null, // {id, name}
     ws: null,
     sending: false,
+    messages: [],         // current view: [{role, content, ts}]
   };
 
   const STORE = {
@@ -19,6 +20,48 @@
     services: "cs_services",
     lastService: "cs_last_service",
   };
+
+  // localStorage chat-history cache. Keyed per (user, service). Survives
+  // refresh, service switch, and reconnect; cleared on logout.
+  const CHAT_KEY_PREFIX = "cs_chat_";
+  const MAX_HISTORY = 100;
+  const MAX_HISTORY_BYTES = 100 * 1024;
+
+  function chatKey(serviceId) {
+    return `${CHAT_KEY_PREFIX}${state.userId}_${serviceId}`;
+  }
+  function saveHistory(serviceId) {
+    if (!serviceId || !state.userId) return;
+    try {
+      let data = state.messages.slice(-MAX_HISTORY);
+      let json = JSON.stringify(data);
+      // Trim from oldest until under the byte cap (single huge bot reply
+      // could blow past MAX_HISTORY entries on byte budget alone).
+      while (json.length > MAX_HISTORY_BYTES && data.length > 1) {
+        data = data.slice(1);
+        json = JSON.stringify(data);
+      }
+      localStorage.setItem(chatKey(serviceId), json);
+    } catch (e) { /* quota exceeded — silently drop */ }
+  }
+  function loadHistory(serviceId) {
+    if (!serviceId || !state.userId) return [];
+    try {
+      const raw = localStorage.getItem(chatKey(serviceId));
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+  function clearAllChatHistory() {
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(CHAT_KEY_PREFIX)) keys.push(k);
+      }
+      keys.forEach((k) => localStorage.removeItem(k));
+    } catch (e) {}
+  }
 
   const $ = (id) => document.getElementById(id);
   const views = { login: $("login-view"), app: $("app-view") };
@@ -214,6 +257,9 @@
   }
 
   function addUserMessage(text) {
+    pushAndRender({ role: "user", content: text, ts: Date.now() });
+  }
+  function addUserMessageDOM(text) {
     const row = document.createElement("div");
     row.className = "flex justify-end";
     const bubble = document.createElement("div");
@@ -227,6 +273,9 @@
   }
 
   function addBotMessage(md) {
+    pushAndRender({ role: "bot", content: md, ts: Date.now() });
+  }
+  function addBotMessageDOM(md) {
     const row = document.createElement("div");
     row.className = "flex group";
     const wrap = document.createElement("div");
@@ -309,6 +358,9 @@
   }
 
   function addErrorMessage(text) {
+    pushAndRender({ role: "error", content: text, ts: Date.now() });
+  }
+  function addErrorMessageDOM(text) {
     const row = document.createElement("div");
     row.className = "flex";
     const bubble = document.createElement("div");
@@ -319,6 +371,33 @@
     row.appendChild(bubble);
     $("messages").appendChild(row);
     scrollMessages();
+  }
+
+  function addHistoryDividerDOM() {
+    const row = document.createElement("div");
+    row.className = "flex items-center gap-2 my-2 text-[11px] text-slate-400";
+    row.innerHTML =
+      '<div class="flex-1 h-px bg-slate-200"></div>' +
+      '<span>여기부터 새 대화 (이전 컨텍스트는 끊겼습니다)</span>' +
+      '<div class="flex-1 h-px bg-slate-200"></div>';
+    $("messages").appendChild(row);
+  }
+
+  function pushAndRender(msg) {
+    state.messages.push(msg);
+    renderMessageDOM(msg);
+    if (state.currentService) saveHistory(state.currentService.id);
+  }
+
+  function renderMessageDOM(msg) {
+    if (msg.role === "user")  addUserMessageDOM(msg.content);
+    else if (msg.role === "bot")   addBotMessageDOM(msg.content);
+    else if (msg.role === "error") addErrorMessageDOM(msg.content);
+  }
+
+  function replayHistory(history) {
+    history.forEach((msg) => renderMessageDOM(msg));
+    if (history.length > 0) addHistoryDividerDOM();
   }
 
   function showTypingBubble() {
@@ -556,10 +635,21 @@
         setChatHeader(svc);
         updateServiceHighlight();
         clearMessages();
-        showEmptyState();
         hideTypingBubble();
         setStatus("");
         setSending(false);
+
+        // Replay cached chat for this service. Claude's conversation context
+        // resets on switch (server-side), but the user can still read what
+        // they previously asked here.
+        const history = loadHistory(svc.id);
+        state.messages = history.slice();
+        if (history.length > 0) {
+          hideEmptyState();
+          replayHistory(history);
+        } else {
+          showEmptyState();
+        }
         $("chat-input").focus();
         break;
       }
@@ -665,7 +755,9 @@
   function logout() {
     if (state.ws) { try { state.ws.close(); } catch (e) {} }
     state.ws = null;
+    clearAllChatHistory();   // wipe per-service caches before user list changes
     clearAuth();
+    state.messages = [];
     $("login-pw").value = "";
     $("login-error").textContent = "";
     enableLoginButton();
@@ -719,6 +811,7 @@
     $("user-id").textContent = state.userId;
     renderServiceList();
     clearMessages();
+    state.messages = [];
     setStatus("");
     state.currentService = null;
     setChatHeader(null);
