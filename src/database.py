@@ -7,10 +7,12 @@ from mysql.connector import Error as MySQLError
 from .config import DatabaseConfig
 
 # Cost-control caps for runaway queries
-_DEFAULT_LIMIT = 100        # auto-appended when a plain SELECT has no LIMIT
-_MAX_LIMIT = 1000           # hard cap on plain SELECTs (raw row dumps)
-_MAX_AGG_LIMIT = 10_000     # higher cap for aggregation/statistics queries
-_QUERY_TIMEOUT_MS = 30_000  # 30s per-statement timeout (MySQL 5.7.8+)
+_DEFAULT_LIMIT = 100              # auto-appended when a plain SELECT has no LIMIT
+_MAX_LIMIT = 1000                 # hard cap on plain SELECTs (raw row dumps)
+_MAX_AGG_LIMIT = 10_000           # higher cap for aggregation/statistics queries
+_QUERY_TIMEOUT_MS = 30_000        # 30s per-statement timeout (MySQL 5.7.8+)
+_MAX_RESULT_BYTES = 5 * 1024 * 1024  # 5MB hard cap, even mid-fetch
+_FETCH_BATCH = 500                # rows per fetchmany batch during streaming
 
 
 class Database:
@@ -61,8 +63,26 @@ class Database:
             except MySQLError:
                 pass  # MySQL < 5.7.8 or non-MySQL — silently fall back
             cursor.execute(clean)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+
+            # Stream rows in batches so a single huge-BLOB row can't blow up
+            # memory — fetchall() pre-loads everything before we can react.
+            rows: List[Dict[str, Any]] = []
+            total_bytes = 0
+            while True:
+                batch = cursor.fetchmany(_FETCH_BATCH)
+                if not batch:
+                    break
+                for row in batch:
+                    row_dict = dict(row)
+                    rows.append(row_dict)
+                    total_bytes += _estimate_row_bytes(row_dict)
+                    if total_bytes > _MAX_RESULT_BYTES:
+                        raise RuntimeError(
+                            f"결과가 {_MAX_RESULT_BYTES // (1024 * 1024)}MB "
+                            f"한도를 초과해 중단했습니다 ({len(rows)}행까지 읽음). "
+                            "조건을 좁히거나 통계 쿼리(COUNT/SUM/GROUP BY)로 바꿔 주세요."
+                        )
+            return rows
         except MySQLError as e:
             raise RuntimeError(_format_query_error(e))
         finally:
@@ -182,6 +202,26 @@ def _cap_limit(sql: str) -> str:
             return _LIMIT_RE.sub(f"LIMIT {max_limit}", sql, count=1)
 
     return sql
+
+
+def _estimate_row_bytes(row: Dict[str, Any]) -> int:
+    """
+    Cheap upper-bound estimate of a row's serialized size.
+    Avoids json.dumps per row (much faster) — accuracy isn't critical
+    since we just need to detect "too big".
+    """
+    n = 32  # per-row overhead (braces, separators)
+    for k, v in row.items():
+        n += len(k) + 6
+        if v is None:
+            n += 4
+        elif isinstance(v, (int, float, bool)):
+            n += 12
+        elif isinstance(v, (bytes, bytearray)):
+            n += len(v)
+        else:
+            n += len(str(v))
+    return n
 
 
 def _format_query_error(e: MySQLError) -> str:
