@@ -1,14 +1,17 @@
 import asyncio
+import csv as csvmod
 import html as _html
+import io
 import json
 import logging
 import re
 import secrets
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Tuple
 
 from aiohttp import WSMsgType, web
+from openpyxl import Workbook
 
 from .agent import ClaudeAgent, UserSession
 from .auth import Authenticator
@@ -32,14 +35,31 @@ _CSV_BLOCK_RE = re.compile(
     r"```csv(?:[ \t]+([^\n`]+?))?[ \t]*\n(.*?)\n[ \t]*```",
     re.DOTALL | re.IGNORECASE,
 )
+# ```xlsx [filename.xlsx]\n ... ``` — multi-sheet workbook;
+# sheets inside are delimited by "## sheet: <name>" header lines.
+_XLSX_BLOCK_RE = re.compile(
+    r"```xlsx(?:[ \t]+([^\n`]+?))?[ \t]*\n(.*?)\n[ \t]*```",
+    re.DOTALL | re.IGNORECASE,
+)
+_SHEET_HEADER_RE = re.compile(
+    r"^[ \t]*##[ \t]*sheet[ \t]*:[ \t]*(.+?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 # Filename sanitizer — strip path separators and anything not alnum/dash/dot
 _SAFE_FILENAME_RE = re.compile(r"[^\w가-힣\-. ]+")
+# Sheet-name sanitizer — openpyxl rejects these chars, max 31 chars
+_BAD_SHEET_CHARS = re.compile(r"[\\/?*\[\]:]")
+
+# Content types for served downloads
+_CT_CSV = "text/csv; charset=utf-8"
+_CT_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _sanitize_filename(name: str) -> str:
+def _sanitize_filename(name: str, default_ext: str = ".csv") -> str:
     """
-    Normalize a CSV filename suggested by Claude. Strips path components,
-    forbids control chars, ensures a .csv extension, and caps length.
+    Normalize a download filename suggested by Claude. Strips path components,
+    forbids control chars, forces the given extension if missing, and caps
+    length. default_ext is appended only when the name has no .csv/.xlsx ext.
     """
     name = (name or "").strip().strip("/\\")
     if "/" in name or "\\" in name:
@@ -48,9 +68,70 @@ def _sanitize_filename(name: str) -> str:
     name = name.strip("._ ") or ""
     if not name:
         return ""
-    if not name.lower().endswith(".csv"):
-        name += ".csv"
+    lower = name.lower()
+    if not (lower.endswith(".csv") or lower.endswith(".xlsx")):
+        name += default_ext
     return name[:120]
+
+
+def _build_xlsx_from_block(body: str) -> Tuple[bytes, int]:
+    """
+    Parse a multi-sheet block into an .xlsx workbook.
+
+    Format:
+        ## sheet: 시트이름1
+        헤더1,헤더2
+        값,값
+        ## sheet: 시트이름2
+        ...
+
+    Returns (xlsx_bytes, sheet_count). Falls back to a single "Sheet1"
+    when the body has no ## sheet: markers (so single-sheet ```xlsx blocks
+    still work).
+    """
+    sheets: List[Tuple[str, List[str]]] = []
+    current_name = None
+    current_lines: List[str] = []
+    for line in body.splitlines():
+        m = _SHEET_HEADER_RE.match(line)
+        if m:
+            if current_name is not None:
+                sheets.append((current_name, current_lines))
+            current_name = m.group(1).strip()
+            current_lines = []
+        elif current_name is not None:
+            current_lines.append(line)
+        # Lines before the first ## sheet: marker are ignored as preamble.
+
+    if current_name is not None:
+        sheets.append((current_name, current_lines))
+
+    # No markers at all → whole body becomes Sheet1
+    if not sheets:
+        sheets = [("Sheet1", body.splitlines())]
+
+    wb = Workbook()
+    wb.remove(wb.active)  # drop the default blank sheet
+    used = set()
+    for raw_name, lines in sheets:
+        safe = _BAD_SHEET_CHARS.sub("_", raw_name).strip()[:31] or "Sheet"
+        base = safe
+        i = 2
+        while safe in used:
+            safe = f"{base[:28]}_{i}"
+            i += 1
+        used.add(safe)
+
+        ws = wb.create_sheet(title=safe)
+        # Strip blank trailing lines that often appear between sheets
+        while lines and not lines[-1].strip():
+            lines.pop()
+        for row in csvmod.reader(io.StringIO("\n".join(lines))):
+            ws.append(row)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue(), len(sheets)
 
 
 def _serve_local_file(configured: str):
@@ -316,32 +397,58 @@ class WebServer:
 
     # ── CSV download (large answers from Claude) ──────────────────────────────
 
-    def _extract_csv_downloads(self, answer: str) -> str:
-        """
-        Find ```csv ... ``` blocks in Claude's markdown answer, save each as a
-        downloadable file, and replace the block with a markdown link. Returns
-        the rewritten answer.
-        """
-        def replace(match):
-            requested_name = (match.group(1) or "").strip()
-            csv_text = match.group(2)
-            filename = _sanitize_filename(requested_name) or "data.csv"
-            content = _UTF8_BOM + csv_text.encode("utf-8")
-            if len(content) > _MAX_DOWNLOAD_BYTES:
-                size_mb = len(content) / (1024 * 1024)
-                return (
-                    f"_⚠️ CSV가 {size_mb:.1f}MB로 다운로드 한도(5MB)를 넘어 생략했습니다. "
-                    "조건을 좁히거나 더 작게 집계해 주세요._"
-                )
-            token = self._register_download(filename, content)
+    def _extract_downloads(self, answer: str) -> str:
+        """Convert both ```csv and ```xlsx blocks into download links."""
+        # xlsx first — its body can contain csv-style rows but the fence is
+        # distinct, so order is for clarity rather than correctness.
+        answer = _XLSX_BLOCK_RE.sub(self._replace_xlsx, answer)
+        answer = _CSV_BLOCK_RE.sub(self._replace_csv, answer)
+        return answer
+
+    def _replace_csv(self, match) -> str:
+        requested_name = (match.group(1) or "").strip()
+        csv_text = match.group(2)
+        filename = _sanitize_filename(requested_name, default_ext=".csv") or "data.csv"
+        content = _UTF8_BOM + csv_text.encode("utf-8")
+        if len(content) > _MAX_DOWNLOAD_BYTES:
+            size_mb = len(content) / (1024 * 1024)
             return (
-                f"📎 [엑셀 다운로드: {filename}](/api/download/{token}) "
-                f"_({len(csv_text.splitlines())}행, {len(content) / 1024:.1f}KB)_"
+                f"_⚠️ CSV가 {size_mb:.1f}MB로 다운로드 한도(5MB)를 넘어 생략했습니다. "
+                "조건을 좁히거나 더 작게 집계해 주세요._"
             )
+        token = self._register_download(filename, content, content_type=_CT_CSV)
+        return (
+            f"📎 [엑셀 다운로드: {filename}](/api/download/{token}) "
+            f"_({len(csv_text.splitlines())}행, {len(content) / 1024:.1f}KB)_"
+        )
 
-        return _CSV_BLOCK_RE.sub(replace, answer)
+    def _replace_xlsx(self, match) -> str:
+        requested_name = (match.group(1) or "").strip()
+        body = match.group(2)
+        filename = _sanitize_filename(requested_name, default_ext=".xlsx") or "data.xlsx"
+        if not filename.lower().endswith(".xlsx"):
+            # User-given .csv name with multi-sheet block — bump to .xlsx
+            filename = filename.rsplit(".", 1)[0] + ".xlsx"
+        try:
+            content, sheet_count = _build_xlsx_from_block(body)
+        except Exception as e:
+            logger.warning(f"xlsx build failed: {e}", exc_info=True)
+            return f"_⚠️ Excel 변환에 실패했습니다: {e}_"
+        if len(content) > _MAX_DOWNLOAD_BYTES:
+            size_mb = len(content) / (1024 * 1024)
+            return (
+                f"_⚠️ Excel이 {size_mb:.1f}MB로 다운로드 한도(5MB)를 넘어 생략했습니다. "
+                "조건을 좁히거나 시트 수를 줄여 주세요._"
+            )
+        token = self._register_download(filename, content, content_type=_CT_XLSX)
+        return (
+            f"📎 [엑셀 다운로드: {filename}](/api/download/{token}) "
+            f"_(시트 {sheet_count}개, {len(content) / 1024:.1f}KB)_"
+        )
 
-    def _register_download(self, filename: str, content: bytes) -> str:
+    def _register_download(
+        self, filename: str, content: bytes, *, content_type: str = _CT_CSV,
+    ) -> str:
         """Store a download under a random token. Best-effort GC of expired."""
         now = time.time()
         # Lazy purge — no background thread; cheap enough on every register
@@ -352,6 +459,7 @@ class WebServer:
         self._downloads[token] = {
             "filename": filename,
             "content": content,
+            "content_type": content_type,
             "expires": now + _DOWNLOAD_TTL_SEC,
         }
         return token
@@ -375,7 +483,7 @@ class WebServer:
         return web.Response(
             body=item["content"],
             headers={
-                "Content-Type": "text/csv; charset=utf-8",
+                "Content-Type": item.get("content_type", _CT_CSV),
                 "Content-Disposition": disposition,
             },
         )
@@ -545,8 +653,8 @@ class WebServer:
                 message,
                 status_callback,
             )
-            # Swap any ```csv blocks for download links before sending out
-            answer = self._extract_csv_downloads(answer)
+            # Swap any ```csv/```xlsx blocks for download links before send
+            answer = self._extract_downloads(answer)
             await _safe_send({"type": "response", "message": answer})
         except Exception as e:
             # agent.process_query already wrote an audit entry with queries_log;
