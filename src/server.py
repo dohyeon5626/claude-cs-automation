@@ -866,7 +866,12 @@ class WebServer:
                         continue
                     cols = int(data.get("cols") or 80)
                     rows = int(data.get("rows") or 24)
-                    await self._ws_claude_login(ws, user, cols=cols, rows=rows)
+                    # Spawn as a task so the receive loop keeps processing
+                    # subsequent claude_login_input/resize/cancel messages —
+                    # otherwise the user's keystrokes never reach the PTY.
+                    asyncio.create_task(
+                        self._ws_claude_login(ws, user, cols=cols, rows=rows)
+                    )
                     continue
 
                 elif mtype == "claude_login_input":
