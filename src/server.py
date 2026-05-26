@@ -281,7 +281,11 @@ class WebServer:
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
     async def _handle_ws(self, request):
-        ws = web.WebSocketResponse(heartbeat=30)
+        # heartbeat sends a WS ping every 30s. receive_timeout=None disables
+        # aiohttp's auto-derived 60s idle close — `async for msg in ws` blocks
+        # during `_process_query`, so client pong frames aren't consumed and
+        # long queries (>60s) would otherwise look idle and get killed.
+        ws = web.WebSocketResponse(heartbeat=30, receive_timeout=None)
         await ws.prepare(request)
         loop = asyncio.get_running_loop()
 
@@ -331,6 +335,10 @@ class WebServer:
                     )
                     logger.info(f"{user.id} selected service: {service.name}")
 
+                elif mtype == "pong":
+                    # Reply to our application-level keepalive; nothing to do.
+                    continue
+
                 elif mtype == "query":
                     if not user or not session:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
@@ -372,6 +380,28 @@ class WebServer:
                 ws.send_json({"type": "status", "message": text}), loop
             )
 
+        # Application-level keepalive: send a small JSON ping every 20s while
+        # the executor runs. WS protocol pings alone aren't enough — some
+        # intermediaries (proxies/firewalls) drop the socket if no app-layer
+        # traffic flows for a while, which surfaces as
+        # "Cannot write to closing transport" when we try to send the answer.
+        done = asyncio.Event()
+
+        async def _keepalive():
+            while not done.is_set():
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=20)
+                    return  # done was set — query finished, stop pinging
+                except asyncio.TimeoutError:
+                    if ws.closed:
+                        return
+                    try:
+                        await ws.send_json({"type": "ping"})
+                    except Exception:
+                        return
+
+        keepalive_task = asyncio.ensure_future(_keepalive())
+
         try:
             await ws.send_json({"type": "status", "message": "요청 분석 중..."})
             answer = await loop.run_in_executor(
@@ -397,3 +427,6 @@ class WebServer:
             await ws.send_json(
                 {"type": "error", "message": f"처리 중 오류가 발생했습니다: {e}"}
             )
+        finally:
+            done.set()
+            keepalive_task.cancel()

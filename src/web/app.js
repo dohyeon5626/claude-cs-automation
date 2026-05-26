@@ -469,6 +469,14 @@
           addErrorMessage(msg.message || "처리 중 오류가 발생했습니다.");
         }
         break;
+
+      case "ping":
+        // Server-side keepalive during long queries — reply so the connection
+        // looks alive to any intermediary that drops idle sockets.
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ type: "pong" }));
+        }
+        break;
     }
   }
 
