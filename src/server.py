@@ -592,14 +592,15 @@ class WebServer:
             async def pump():
                 url_sent = False
                 while True:
-                    line = await proc.stdout.readline()
+                    try:
+                        line = await proc.stdout.readline()
+                    except Exception:
+                        return
                     if not line:
                         return
                     text = line.decode("utf-8", errors="replace").rstrip("\n")
                     if ws.closed:
                         return
-                    # First URL we see → tell the client immediately so its
-                    # pre-opened tab can navigate to it.
                     if not url_sent:
                         m = url_re.search(text)
                         if m:
@@ -610,31 +611,70 @@ class WebServer:
                             url_sent = True
                     await ws.send_json({"type": "claude_login_output", "line": text})
 
+            async def poll_status():
+                """
+                Detect login success via status ping even when the CLI
+                doesn't cleanly exit after the OAuth callback (some
+                Claude CLI versions hang waiting on stdin or buffer output
+                until exit). Once `claude -p OK` returns, we know auth
+                worked regardless of what proc.wait() is doing.
+                """
+                while True:
+                    await asyncio.sleep(3)
+                    if ws.closed:
+                        return None
+                    s = await self._get_claude_status(force=True)
+                    if s["logged_in"]:
+                        return s
+
             pump_task = asyncio.create_task(pump())
+            proc_task = asyncio.create_task(proc.wait())
+            poll_task = asyncio.create_task(poll_status())
+
             try:
-                await asyncio.wait_for(proc.wait(), timeout=_CLAUDE_LOGIN_TIMEOUT)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+                done, pending = await asyncio.wait(
+                    [proc_task, poll_task],
+                    timeout=_CLAUDE_LOGIN_TIMEOUT,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
                 pump_task.cancel()
+
+            timed_out = not done
+            for t in (proc_task, poll_task):
+                if not t.done():
+                    t.cancel()
+
+            # Make sure the CLI subprocess is reaped — it may still be alive
+            # if poll_task won the race (login succeeded but CLI didn't exit).
+            if proc.returncode is None:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except ProcessLookupError:
+                        pass
+
+            if timed_out:
                 await ws.send_json({
                     "type": "claude_login_done",
                     "ok": False,
                     "message": "로그인 시간이 초과되었습니다 (5분).",
                 })
                 return
-            finally:
-                pump_task.cancel()
 
-            ok = proc.returncode == 0
-            # Refresh status cache so the next /api/claude/status reflects reality
+            # Final status check (poll_task likely already did this fresh)
             status = await self._get_claude_status(force=True)
+            ok = status["logged_in"]
             await ws.send_json({
                 "type": "claude_login_done",
-                "ok": ok and status["logged_in"],
+                "ok": ok,
                 "message": (
-                    "로그인되었습니다." if ok and status["logged_in"]
-                    else f"로그인에 실패했습니다 (exit={proc.returncode}). {status.get('detail', '')}"
+                    "로그인되었습니다." if ok
+                    else f"로그인에 실패했습니다. {status.get('detail', '')}"
                 ),
                 "status": status,
             })
