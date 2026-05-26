@@ -4,11 +4,13 @@ import html as _html
 import io
 import json
 import logging
+import os
+import pty
 import re
 import secrets
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from aiohttp import WSMsgType, web
 from openpyxl import Workbook
@@ -192,8 +194,10 @@ class WebServer:
         self._claude_status: Dict = {"logged_in": False, "detail": "unchecked", "checked_at": 0.0}
         # Lock to serialize login/logout subprocess calls (only one can run at a time)
         self._claude_login_lock = asyncio.Lock()
-        # Active `claude login` subprocess, if any — used by the paste handler
+        # Active `claude login` subprocess + PTY master fd, if any.
+        # Used by the paste handler to write the OAuth code to the CLI.
         self._claude_login_proc = None
+        self._claude_login_master_fd: Optional[int] = None
 
     def build_app(self) -> web.Application:
         app = web.Application(middlewares=[_no_cache_for_shell])
@@ -581,49 +585,115 @@ class WebServer:
         async with self._claude_login_lock:
             await ws.send_json({"type": "claude_login_started"})
 
-            cmd = [self._config.claude_binary, "login"]
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            # Track this so a paste from the WS can be fed in. Cleared at
-            # the end of this handler.
+            # Spawn the CLI under a PTY. Without this Node.js sees stdout as
+            # a pipe and switches to block buffering — we'd never see the
+            # OAuth URL until the process exits.
+            try:
+                master_fd, slave_fd = pty.openpty()
+            except Exception as e:
+                await ws.send_json({
+                    "type": "claude_login_done",
+                    "ok": False,
+                    "message": f"PTY 생성 실패: {e}",
+                })
+                return
+
+            # Disable terminal echo so the code the user pastes doesn't get
+            # echoed back into the output stream.
+            try:
+                import termios
+                attrs = termios.tcgetattr(slave_fd)
+                attrs[3] &= ~termios.ECHO
+                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            except Exception:
+                pass
+
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self._config.claude_binary, "login",
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    start_new_session=True,
+                )
+            except Exception as e:
+                os.close(master_fd)
+                os.close(slave_fd)
+                await ws.send_json({
+                    "type": "claude_login_done",
+                    "ok": False,
+                    "message": f"실행 실패: {e}",
+                })
+                return
+            os.close(slave_fd)
+
             self._claude_login_proc = proc
+            self._claude_login_master_fd = master_fd
 
-            url_re = re.compile(r"https?://[^\s\]\)>]+")
+            loop = asyncio.get_running_loop()
+            url_re = re.compile(r"https?://[^\s\]\)>\"]+")
+            ansi_re = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+            buffer = bytearray()
+            url_sent = False
 
-            async def pump():
-                url_sent = False
-                while True:
+            def on_readable():
+                nonlocal buffer, url_sent
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    data = b""
+                if not data:
                     try:
-                        line = await proc.stdout.readline()
+                        loop.remove_reader(master_fd)
                     except Exception:
-                        return
-                    if not line:
-                        return
-                    text = line.decode("utf-8", errors="replace").rstrip("\n")
-                    if ws.closed:
-                        return
+                        pass
+                    return
+                buffer.extend(data)
+
+                # Split on newline (PTY uses CRLF). Also flush a partial
+                # trailing chunk that looks like a prompt (no newline yet)
+                # so the URL gets sent even before EOL.
+                while True:
+                    nl = buffer.find(b"\n")
+                    if nl < 0:
+                        break
+                    line_bytes = bytes(buffer[:nl])
+                    del buffer[:nl + 1]
+                    text = ansi_re.sub("", line_bytes.decode("utf-8", "replace")).rstrip("\r")
+
                     if not url_sent:
                         m = url_re.search(text)
                         if m:
-                            await ws.send_json({
+                            asyncio.create_task(ws.send_json({
                                 "type": "claude_login_url",
                                 "url": m.group(0),
-                            })
+                            }))
                             url_sent = True
-                    await ws.send_json({"type": "claude_login_output", "line": text})
+
+                    if text:
+                        asyncio.create_task(ws.send_json({
+                            "type": "claude_login_output",
+                            "line": text,
+                        }))
+
+                # Also try matching URL in the un-newlined trailing buffer
+                if not url_sent and buffer:
+                    tail = ansi_re.sub("", buffer.decode("utf-8", "replace"))
+                    m = url_re.search(tail)
+                    if m:
+                        asyncio.create_task(ws.send_json({
+                            "type": "claude_login_url",
+                            "url": m.group(0),
+                        }))
+                        url_sent = True
+
+            try:
+                loop.add_reader(master_fd, on_readable)
+            except Exception as e:
+                logger.warning(f"add_reader failed: {e}")
 
             async def poll_status():
-                """
-                Detect login success via status ping even when the CLI
-                doesn't cleanly exit after the OAuth callback (some
-                Claude CLI versions hang waiting on stdin or buffer output
-                until exit). Once `claude -p OK` returns, we know auth
-                worked regardless of what proc.wait() is doing.
-                """
+                """Detect success even if the CLI doesn't print a sentinel."""
                 while True:
                     await asyncio.sleep(3)
                     if ws.closed:
@@ -632,7 +702,6 @@ class WebServer:
                     if s["logged_in"]:
                         return s
 
-            pump_task = asyncio.create_task(pump())
             proc_task = asyncio.create_task(proc.wait())
             poll_task = asyncio.create_task(poll_status())
 
@@ -643,15 +712,16 @@ class WebServer:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             finally:
-                pump_task.cancel()
+                try:
+                    loop.remove_reader(master_fd)
+                except Exception:
+                    pass
 
             timed_out = not done
             for t in (proc_task, poll_task):
                 if not t.done():
                     t.cancel()
 
-            # Make sure the CLI subprocess is reaped — it may still be alive
-            # if poll_task won the race (login succeeded but CLI didn't exit).
             if proc.returncode is None:
                 try:
                     proc.terminate()
@@ -663,6 +733,14 @@ class WebServer:
                     except ProcessLookupError:
                         pass
 
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+
+            self._claude_login_proc = None
+            self._claude_login_master_fd = None
+
             if timed_out:
                 await ws.send_json({
                     "type": "claude_login_done",
@@ -671,9 +749,6 @@ class WebServer:
                 })
                 return
 
-            self._claude_login_proc = None
-
-            # Final status check (poll_task likely already did this fresh)
             status = await self._get_claude_status(force=True)
             ok = status["logged_in"]
             await ws.send_json({
@@ -687,24 +762,24 @@ class WebServer:
             })
 
     async def _ws_claude_login_paste(self, ws, user, code: str):
-        """Pipe a pasted OAuth code into the in-flight `claude login` stdin."""
+        """Pipe a pasted OAuth code into the in-flight `claude login` PTY."""
         if not getattr(user, "admin", False):
             return
+        fd = getattr(self, "_claude_login_master_fd", None)
         proc = getattr(self, "_claude_login_proc", None)
-        if proc is None or proc.returncode is not None or proc.stdin is None:
+        if fd is None or proc is None or proc.returncode is not None:
             await ws.send_json({
                 "type": "claude_login_output",
                 "line": "[코드 전송 실패: 진행 중인 로그인이 없습니다]",
             })
             return
         try:
-            proc.stdin.write((code.strip() + "\n").encode("utf-8"))
-            await proc.stdin.drain()
+            os.write(fd, (code.strip() + "\n").encode("utf-8"))
             await ws.send_json({
                 "type": "claude_login_output",
                 "line": "[코드를 CLI로 전달했습니다 — 인증 처리 중...]",
             })
-        except Exception as e:
+        except OSError as e:
             await ws.send_json({
                 "type": "claude_login_output",
                 "line": f"[코드 전송 실패: {e}]",
