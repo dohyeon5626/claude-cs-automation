@@ -322,19 +322,26 @@ class ClaudeAgent:
         Parse Claude's reply. Returns (action, payload):
           - ("QUERY", sql_text)
           - ("ANSWER", markdown_text)
+
+        Scans every line for the first QUERY/ANSWER directive — Claude often
+        prefaces the directive with a short Korean sentence ("결과를 보고 다시
+        조회하겠습니다."), and judging only the first line would misroute those
+        replies into ANSWER and surface the SQL as the user-visible answer.
         Falls back to treating the whole reply as an answer.
         """
         stripped = reply.strip()
-        first_line, _, rest = stripped.partition("\n")
-        directive = first_line.strip().upper()
+        lines = stripped.splitlines()
 
-        if directive.startswith("QUERY"):
-            sql_match = _SQL_BLOCK_RE.search(rest)
-            sql = sql_match.group(1).strip() if sql_match else rest.strip()
-            return "QUERY", sql
-
-        if directive.startswith("ANSWER"):
-            return "ANSWER", rest.strip() or stripped
+        for i, line in enumerate(lines):
+            directive = line.strip().upper()
+            if directive.startswith("QUERY"):
+                rest = "\n".join(lines[i + 1:])
+                sql_match = _SQL_BLOCK_RE.search(rest)
+                sql = sql_match.group(1).strip() if sql_match else rest.strip()
+                return "QUERY", sql
+            if directive.startswith("ANSWER"):
+                rest = "\n".join(lines[i + 1:]).strip()
+                return "ANSWER", rest or stripped
 
         return "ANSWER", stripped
 
