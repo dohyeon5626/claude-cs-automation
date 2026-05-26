@@ -2,12 +2,14 @@ import asyncio
 import html as _html
 import json
 import logging
+import re
+import secrets
+import time
 from pathlib import Path
 from typing import Dict
 
 from aiohttp import WSMsgType, web
 
-from . import audit
 from .agent import ClaudeAgent, UserSession
 from .auth import Authenticator
 from .config import AppConfig
@@ -19,6 +21,36 @@ _WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # Hard limit on a single user query (defends against bloated/abusive prompts)
 _MAX_QUERY_LEN = 4000
+
+# CSV download caps
+_DOWNLOAD_TTL_SEC = 30 * 60            # downloads expire after 30 min
+_MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024  # 5MB per file
+_UTF8_BOM = b"\xef\xbb\xbf"            # makes Excel open Korean text correctly
+
+# ```csv  optional-filename.csv\n ... \n``` — same fence as standard markdown
+_CSV_BLOCK_RE = re.compile(
+    r"```csv(?:[ \t]+([^\n`]+?))?[ \t]*\n(.*?)\n[ \t]*```",
+    re.DOTALL | re.IGNORECASE,
+)
+# Filename sanitizer — strip path separators and anything not alnum/dash/dot
+_SAFE_FILENAME_RE = re.compile(r"[^\w가-힣\-. ]+")
+
+
+def _sanitize_filename(name: str) -> str:
+    """
+    Normalize a CSV filename suggested by Claude. Strips path components,
+    forbids control chars, ensures a .csv extension, and caps length.
+    """
+    name = (name or "").strip().strip("/\\")
+    if "/" in name or "\\" in name:
+        name = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    name = _SAFE_FILENAME_RE.sub("_", name)
+    name = name.strip("._ ") or ""
+    if not name:
+        return ""
+    if not name.lower().endswith(".csv"):
+        name += ".csv"
+    return name[:120]
 
 
 def _serve_local_file(configured: str):
@@ -48,6 +80,9 @@ class WebServer:
         self._agent = agent
         self._auth = auth
         self._services = services
+        # token -> {filename, content (bytes), expires (epoch sec)}
+        # In-memory only — survives until the server restarts.
+        self._downloads: Dict[str, Dict] = {}
 
     def build_app(self) -> web.Application:
         app = web.Application()
@@ -63,6 +98,7 @@ class WebServer:
                 web.get("/sw.js", self._serve_sw),
                 web.post("/api/login", self._api_login),
                 web.post("/api/query", self._api_query),
+                web.get("/api/download/{token}", self._serve_download),
                 web.get("/ws", self._handle_ws),
             ]
         )
@@ -278,6 +314,72 @@ class WebServer:
             return auth_header[7:].strip()
         return request.query.get("token", "")
 
+    # ── CSV download (large answers from Claude) ──────────────────────────────
+
+    def _extract_csv_downloads(self, answer: str) -> str:
+        """
+        Find ```csv ... ``` blocks in Claude's markdown answer, save each as a
+        downloadable file, and replace the block with a markdown link. Returns
+        the rewritten answer.
+        """
+        def replace(match):
+            requested_name = (match.group(1) or "").strip()
+            csv_text = match.group(2)
+            filename = _sanitize_filename(requested_name) or "data.csv"
+            content = _UTF8_BOM + csv_text.encode("utf-8")
+            if len(content) > _MAX_DOWNLOAD_BYTES:
+                size_mb = len(content) / (1024 * 1024)
+                return (
+                    f"_⚠️ CSV가 {size_mb:.1f}MB로 다운로드 한도(5MB)를 넘어 생략했습니다. "
+                    "조건을 좁히거나 더 작게 집계해 주세요._"
+                )
+            token = self._register_download(filename, content)
+            return (
+                f"📎 [엑셀 다운로드: {filename}](/api/download/{token}) "
+                f"_({len(csv_text.splitlines())}행, {len(content) / 1024:.1f}KB)_"
+            )
+
+        return _CSV_BLOCK_RE.sub(replace, answer)
+
+    def _register_download(self, filename: str, content: bytes) -> str:
+        """Store a download under a random token. Best-effort GC of expired."""
+        now = time.time()
+        # Lazy purge — no background thread; cheap enough on every register
+        for tok in list(self._downloads):
+            if self._downloads[tok]["expires"] < now:
+                del self._downloads[tok]
+        token = secrets.token_urlsafe(16)
+        self._downloads[token] = {
+            "filename": filename,
+            "content": content,
+            "expires": now + _DOWNLOAD_TTL_SEC,
+        }
+        return token
+
+    async def _serve_download(self, request):
+        token = request.match_info["token"]
+        item = self._downloads.get(token)
+        if not item or item["expires"] < time.time():
+            return web.Response(
+                status=404,
+                text="다운로드 링크가 만료되었거나 존재하지 않습니다.",
+            )
+        # RFC 5987 filename* lets browsers handle non-ASCII names correctly
+        filename = item["filename"]
+        ascii_fallback = re.sub(r"[^\x20-\x7e]", "_", filename) or "download.csv"
+        from urllib.parse import quote
+        disposition = (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{quote(filename)}"
+        )
+        return web.Response(
+            body=item["content"],
+            headers={
+                "Content-Type": "text/csv; charset=utf-8",
+                "Content-Disposition": disposition,
+            },
+        )
+
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
     async def _handle_ws(self, request):
@@ -339,6 +441,12 @@ class WebServer:
                     # Reply to our application-level keepalive; nothing to do.
                     continue
 
+                elif mtype == "cancel":
+                    if session and session.current_task and not session.current_task.done():
+                        session.request_cancel()
+                    # No in-flight query → silently ignore (idempotent)
+                    continue
+
                 elif mtype == "query":
                     if not user or not session:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
@@ -357,7 +465,17 @@ class WebServer:
                             "message": f"질문이 너무 깁니다 (최대 {_MAX_QUERY_LEN}자).",
                         })
                         continue
-                    await self._process_query(ws, session, service, message, loop)
+                    if session.current_task and not session.current_task.done():
+                        await ws.send_json({
+                            "type": "error",
+                            "message": "이전 요청이 처리 중입니다. 완료 후 다시 시도하거나 중단 버튼을 눌러 주세요.",
+                        })
+                        continue
+                    # Spawn as a task so this receive loop keeps running and
+                    # can deliver subsequent cancel/select_service messages.
+                    session.current_task = asyncio.create_task(
+                        self._process_query(ws, session, service, message, loop)
+                    )
 
                 else:
                     await ws.send_json({"type": "error", "message": f"알 수 없는 메시지: {mtype}"})
@@ -365,6 +483,10 @@ class WebServer:
         except Exception as e:
             logger.error(f"WebSocket error: {e}", exc_info=True)
         finally:
+            # If the client vanished mid-query, signal the background work to
+            # stop so we don't keep burning CLI time on an absent user.
+            if session and session.current_task and not session.current_task.done():
+                session.request_cancel()
             logger.info(
                 f"WebSocket disconnected: {user.id if user else 'unauthenticated'}"
             )
@@ -402,8 +524,19 @@ class WebServer:
 
         keepalive_task = asyncio.ensure_future(_keepalive())
 
+        async def _safe_send(payload):
+            # The peer may have disconnected while the executor was running.
+            # Don't let "Cannot write to closing transport" mask the original
+            # error or break the WS handler loop.
+            if ws.closed:
+                return
+            try:
+                await ws.send_json(payload)
+            except Exception as send_err:
+                logger.warning(f"WebSocket send failed: {send_err}")
+
         try:
-            await ws.send_json({"type": "status", "message": "요청 분석 중..."})
+            await _safe_send({"type": "status", "message": "요청 분석 중..."})
             answer = await loop.run_in_executor(
                 None,
                 self._agent.process_query,
@@ -412,19 +545,14 @@ class WebServer:
                 message,
                 status_callback,
             )
-            await ws.send_json({"type": "response", "message": answer})
+            # Swap any ```csv blocks for download links before sending out
+            answer = self._extract_csv_downloads(answer)
+            await _safe_send({"type": "response", "message": answer})
         except Exception as e:
+            # agent.process_query already wrote an audit entry with queries_log;
+            # no need to log again here.
             logger.error(f"Query processing error: {e}", exc_info=True)
-            audit.log_query_event({
-                "ts": audit.now_iso(),
-                "user": session.user_id,
-                "service": service.id,
-                "question": message,
-                "answered": False,
-                "reason": "error",
-                "error": str(e),
-            })
-            await ws.send_json(
+            await _safe_send(
                 {"type": "error", "message": f"처리 중 오류가 발생했습니다: {e}"}
             )
         finally:

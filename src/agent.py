@@ -2,9 +2,10 @@ import json
 import logging
 import re
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, List, Optional, Tuple
 
 from .audit import log_query_event, now_iso
 from .repository import pull_repo
@@ -83,6 +84,10 @@ def check_claude_cli(model: str, binary: str = "claude"):
         raise RuntimeError(f"Claude CLI 오류: {data.get('result', '')}")
 
 
+class CancelledByUser(Exception):
+    """Raised when the user clicked the cancel button mid-query."""
+
+
 @dataclass
 class UserSession:
     """One connected user's conversation state."""
@@ -92,9 +97,26 @@ class UserSession:
     # Claude CLI session id — gives the user a persistent conversation context
     cli_session_id: Optional[str] = None
 
+    # Cancel coordination — touched by both the asyncio handler (WS receive)
+    # and the executor thread (agent loop). threading.Event is safe for both.
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    _current_process: Optional[subprocess.Popen] = field(default=None, init=False, repr=False)
+    # Server-side: the asyncio.Task currently driving process_query, if any.
+    current_task: Optional[Any] = field(default=None, init=False, repr=False)
+
     def select_service(self, service_id: str):
         self.service_id = service_id
         self.cli_session_id = None  # fresh conversation when service changes
+
+    def request_cancel(self):
+        """Ask the in-flight query to stop. Safe to call from any thread."""
+        self.cancel_event.set()
+        proc = self._current_process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
 
 class ClaudeAgent:
@@ -124,6 +146,7 @@ class ClaudeAgent:
 
         started = time.monotonic()
         queries_log: List[dict] = []
+        session.cancel_event.clear()  # fresh slate for this query
 
         # 1. Pull the repo (non-fatal: fall back to the existing checkout)
         status_callback("최신 코드 동기화 중...")
@@ -143,55 +166,86 @@ class ClaudeAgent:
 
         # 3. Agentic loop
         turn_prompt = self._build_initial_prompt(service, live_schema, user_query)
+        iteration = 0
 
-        for iteration in range(_MAX_ITERATIONS):
-            status_callback(
-                "요청 분석 중..."
-                if iteration == 0
-                else "추가 분석 중..."
-            )
+        try:
+            for iteration in range(_MAX_ITERATIONS):
+                if session.cancel_event.is_set():
+                    raise CancelledByUser()
 
-            reply, new_session_id = self._invoke_cli(
-                turn_prompt, session.cli_session_id, repo_path
-            )
-            if session.cli_session_id is None:
-                session.cli_session_id = new_session_id
-
-            action, payload = self._parse_action(reply)
-
-            if action == "QUERY":
-                if db is None:
-                    # 서비스에 DB가 없으므로 ANSWER만 가능
-                    turn_prompt = (
-                        "이 서비스에는 데이터베이스가 없어 SQL 조회를 실행할 수 없습니다. "
-                        "레포지토리 탐색만으로 답변하세요. "
-                        "첫 줄을 ANSWER로 시작해 한국어 Markdown 답변을 작성해 주세요."
-                    )
-                    continue
-                preview = " ".join(payload.split())[:70]
-                status_callback(f"데이터 조회 중 · {preview}")
-                turn_prompt = self._run_query(db, payload, queries_log)
-            else:  # ANSWER (or fallback)
-                _emit_audit(
-                    session, service, user_query, queries_log,
-                    iterations=iteration + 1,
-                    elapsed_ms=int((time.monotonic() - started) * 1000),
-                    answered=True,
-                    answer_chars=len(payload),
+                status_callback(
+                    "요청 분석 중..."
+                    if iteration == 0
+                    else "추가 분석 중..."
                 )
-                return payload
 
-        _emit_audit(
-            session, service, user_query, queries_log,
-            iterations=_MAX_ITERATIONS,
-            elapsed_ms=int((time.monotonic() - started) * 1000),
-            answered=False,
-            reason="max_iterations",
-        )
-        return (
-            "조회 단계가 너무 많아 처리를 중단했습니다. "
-            "질문을 더 구체적으로 작성해 주세요."
-        )
+                reply, new_session_id = self._invoke_cli(
+                    turn_prompt, session.cli_session_id, repo_path, session=session
+                )
+                if session.cli_session_id is None:
+                    session.cli_session_id = new_session_id
+
+                action, payload = self._parse_action(reply)
+
+                if action == "QUERY":
+                    if db is None:
+                        # 서비스에 DB가 없으므로 ANSWER만 가능
+                        turn_prompt = (
+                            "이 서비스에는 데이터베이스가 없어 SQL 조회를 실행할 수 없습니다. "
+                            "레포지토리 탐색만으로 답변하세요. "
+                            "첫 줄을 ANSWER로 시작해 한국어 Markdown 답변을 작성해 주세요."
+                        )
+                        continue
+                    preview = " ".join(payload.split())[:70]
+                    status_callback(f"데이터 조회 중 · {preview}")
+                    turn_prompt = self._run_query(db, payload, queries_log)
+                else:  # ANSWER (or fallback)
+                    if not payload.strip():
+                        payload = (
+                            "Claude로부터 빈 응답을 받았습니다. "
+                            "질문을 조금 다르게 다시 시도해 주세요."
+                        )
+                    _emit_audit(
+                        session, service, user_query, queries_log,
+                        iterations=iteration + 1,
+                        elapsed_ms=int((time.monotonic() - started) * 1000),
+                        answered=True,
+                        answer_chars=len(payload),
+                    )
+                    return payload
+
+            _emit_audit(
+                session, service, user_query, queries_log,
+                iterations=_MAX_ITERATIONS,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                answered=False,
+                reason="max_iterations",
+            )
+            return (
+                "조회 단계가 너무 많아 처리를 중단했습니다. "
+                "질문을 더 구체적으로 작성해 주세요."
+            )
+        except CancelledByUser:
+            _emit_audit(
+                session, service, user_query, queries_log,
+                iterations=iteration + 1,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                answered=False,
+                reason="cancelled",
+            )
+            return "요청을 중단했습니다."
+        except Exception as e:
+            # Capture the per-question query trace before the exception
+            # bubbles up — server-side fallback logging can't see queries_log.
+            _emit_audit(
+                session, service, user_query, queries_log,
+                iterations=iteration + 1,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                answered=False,
+                reason="error",
+                error=str(e),
+            )
+            raise
 
     # ── Prompt building ───────────────────────────────────────────────────────
 
@@ -232,13 +286,21 @@ class ClaudeAgent:
                 "조회 결과는 다음 메시지로 전달됩니다. 필요하면 QUERY를 여러 번 반복할 수 있습니다.\n\n"
                 "충분한 정보를 얻었으면, CS 담당자가 고객에게 바로 안내할 수 있는 최종 답변을 작성하세요.\n"
                 "  - 첫 줄: ANSWER\n"
-                "  - 그 다음 줄부터: 한국어 Markdown 답변 (표, 요약 문장 등 활용)\n"
+                "  - 그 다음 줄부터: 한국어 Markdown 답변 (표, 요약 문장 등 활용)\n\n"
+                "## 큰 결과는 CSV 다운로드로 제공\n"
+                "30행이 넘는 표는 화면에 펼치지 말고 ```csv 코드 블록에 담아 주세요. "
+                "서버가 자동으로 엑셀에서 바로 열리는 다운로드 링크로 바꿔 응답에 넣습니다.\n"
+                "  - 첫 줄: 헤더 (쉼표 구분)\n"
+                "  - 둘째 줄부터: 데이터 (값에 쉼표·줄바꿈·큰따옴표가 있으면 큰따옴표로 감싸고 \"\"로 이스케이프)\n"
+                "  - 파일명을 지정하려면 ```csv 다음에 공백 후 파일명 — 예: ```csv 월별주문통계.csv\n"
+                "  - 답변 본문에는 무엇을 담은 파일인지 1~2줄 요약을 함께 적으세요.\n"
             )
             rules_section = (
                 "## 규칙\n"
                 "- SELECT 쿼리만 사용하세요. INSERT/UPDATE/DELETE/DROP/TRUNCATE는 절대 금지입니다.\n"
                 "- 비밀번호, 카드번호, 주민등록번호 등 민감한 정보는 조회하거나 노출하지 마세요.\n"
-                "- 한 번에 최대 1000행만 조회할 수 있습니다. LIMIT 이 1000 을 넘으면 서버가 자동으로 1000 으로 줄입니다.\n"
+                "- 일반 SELECT는 한 번에 최대 1000행까지 조회할 수 있습니다 (LIMIT 미지정 시 자동 LIMIT 100).\n"
+                "- 통계 쿼리(`COUNT/SUM/AVG/MIN/MAX` 또는 `GROUP BY`)는 최대 10000행까지 허용되며 자동 LIMIT이 붙지 않습니다. 큰 데이터는 집계해서 가져오세요.\n"
                 "- 쿼리는 30초를 초과하면 서버가 중단합니다. 무거운 조인·집계는 조건을 좁혀 사용하세요.\n"
                 "- 전체 테이블 덤프처럼 과도하게 큰 요청은 거절하고 ANSWER로 사유를 설명하세요.\n"
                 + _SECURITY_RULES +
@@ -280,32 +342,55 @@ class ClaudeAgent:
     # ── Claude CLI invocation ─────────────────────────────────────────────────
 
     def _invoke_cli(
-        self, prompt: str, session_id: Optional[str], cwd: str
+        self,
+        prompt: str,
+        session_id: Optional[str],
+        cwd: str,
+        session: Optional[UserSession] = None,
     ) -> Tuple[str, Optional[str]]:
-        """Call the Claude CLI in print mode. Returns (reply_text, session_id)."""
+        """
+        Call the Claude CLI in print mode. Returns (reply_text, session_id).
+
+        Uses Popen (not subprocess.run) so a cancel from another thread can
+        terminate the running CLI process via session.request_cancel().
+        """
         cmd = [self._binary, "-p", "--output-format", "json"]
         if self._model:
             cmd += ["--model", self._model]
         if session_id:
             cmd += ["--resume", session_id]
 
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+        )
+        if session is not None:
+            session._current_process = proc
         try:
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                cwd=cwd,
-                timeout=_CLI_TIMEOUT,
-            )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Claude CLI 응답 시간이 초과되었습니다.")
+            try:
+                stdout, stderr = proc.communicate(prompt, timeout=_CLI_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise RuntimeError("Claude CLI 응답 시간이 초과되었습니다.")
+        finally:
+            if session is not None:
+                session._current_process = None
+
+        # Check cancellation FIRST — a terminated subprocess returns non-zero,
+        # which would otherwise surface as a generic CLI error.
+        if session is not None and session.cancel_event.is_set():
+            raise CancelledByUser()
 
         if proc.returncode != 0:
-            raise RuntimeError(f"Claude CLI 실행 오류: {proc.stderr.strip()}")
+            raise RuntimeError(f"Claude CLI 실행 오류: {(stderr or '').strip()}")
 
         try:
-            data = json.loads(proc.stdout)
+            data = json.loads(stdout)
         except json.JSONDecodeError:
             raise RuntimeError("Claude CLI 응답을 해석할 수 없습니다.")
 
@@ -330,6 +415,8 @@ class ClaudeAgent:
         Falls back to treating the whole reply as an answer.
         """
         stripped = reply.strip()
+        if not stripped:
+            return "ANSWER", ""
         lines = stripped.splitlines()
 
         for i, line in enumerate(lines):
@@ -341,7 +428,9 @@ class ClaudeAgent:
                 return "QUERY", sql
             if directive.startswith("ANSWER"):
                 rest = "\n".join(lines[i + 1:]).strip()
-                return "ANSWER", rest or stripped
+                # Empty body falls through to the outer empty-reply handler
+                # rather than echoing the literal "ANSWER" back to the user.
+                return "ANSWER", rest
 
         return "ANSWER", stripped
 
@@ -362,12 +451,7 @@ class ClaudeAgent:
                     "ms": elapsed_ms,
                     "error": None,
                 })
-            result_json = json.dumps(rows, ensure_ascii=False, default=str)
-            if len(result_json) > _MAX_RESULT_CHARS:
-                result_json = (
-                    result_json[:_MAX_RESULT_CHARS]
-                    + "\n...(결과가 너무 커서 일부만 표시됨. 더 구체적인 조건으로 조회하세요.)"
-                )
+            result_json = _serialize_rows_capped(rows)
             return self._query_result_prompt(sql, result_json)
         except (ValueError, RuntimeError) as e:
             elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -379,6 +463,46 @@ class ClaudeAgent:
                     "error": str(e),
                 })
             return self._query_error_prompt(sql, str(e))
+
+
+# ── Result serialization ──────────────────────────────────────────────────
+
+def _serialize_rows_capped(rows: List[dict]) -> str:
+    """
+    Serialize rows to JSON, dropping trailing rows if needed so the prompt
+    stays under _MAX_RESULT_CHARS. Truncates at row boundaries (never mid-row),
+    so Claude always sees valid JSON.
+    """
+    if not rows:
+        return "[]"
+
+    full = json.dumps(rows, ensure_ascii=False, default=str)
+    if len(full) <= _MAX_RESULT_CHARS:
+        return full
+
+    # Binary search for the largest row prefix that fits, leaving headroom
+    # for the truncation note appended below.
+    budget = _MAX_RESULT_CHARS - 200
+    lo, hi = 0, len(rows)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(json.dumps(rows[:mid], ensure_ascii=False, default=str)) <= budget:
+            lo = mid
+        else:
+            hi = mid - 1
+
+    if lo == 0:
+        return (
+            f"[결과 1행이 너무 큽니다 (~{len(full)}자). "
+            "필요한 컬럼만 SELECT 하거나 LENGTH·SUBSTRING으로 잘라서 조회하세요.]"
+        )
+
+    truncated = json.dumps(rows[:lo], ensure_ascii=False, default=str)
+    return (
+        f"{truncated}\n\n"
+        f"(총 {len(rows)}행 중 {lo}행만 표시. 조건을 좁히거나 "
+        "통계 쿼리(COUNT/SUM/GROUP BY)로 바꿔 다시 시도하세요.)"
+    )
 
 
 # ── Audit helper ──────────────────────────────────────────────────────────
@@ -394,6 +518,7 @@ def _emit_audit(
     answered: bool,
     answer_chars: int = 0,
     reason: Optional[str] = None,
+    error: Optional[str] = None,
 ):
     entry = {
         "ts": now_iso(),
@@ -409,4 +534,6 @@ def _emit_audit(
         entry["answer_chars"] = answer_chars
     if reason:
         entry["reason"] = reason
+    if error:
+        entry["error"] = error
     log_query_event(entry)
