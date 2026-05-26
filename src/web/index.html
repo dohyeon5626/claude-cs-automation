@@ -130,12 +130,21 @@
         <span id="claude-login-status" class="text-xs text-slate-500">진행 중...</span>
         <button id="claude-login-close" class="ml-auto text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
       </div>
-      <div class="px-6 py-3 text-xs text-slate-600 bg-slate-50 border-b border-slate-200">
-        새 탭에서 OAuth 로그인을 완료해 주세요. 완료되면 이 창은 자동으로 닫힙니다.
-        탭이 자동으로 열리지 않으면 아래 출력에 표시되는 URL을 직접 클릭하세요.
+      <div class="px-6 py-3 text-xs text-slate-600 bg-slate-50 border-b border-slate-200 space-y-1">
+        <div>1. 새 탭에서 OAuth 로그인 — 완료 화면에 <b>인증 코드</b>가 표시됩니다.</div>
+        <div>2. 그 코드를 복사해 아래에 붙여넣고 <b>전송</b>을 누르세요.</div>
+      </div>
+      <div class="px-6 py-3 border-b border-slate-200 flex gap-2">
+        <input id="claude-login-code" type="text" autocomplete="off" spellcheck="false"
+               placeholder="인증 코드 붙여넣기"
+               class="flex-1 h-9 bg-white border border-slate-300 rounded-lg px-3 text-sm font-mono placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 outline-none transition" />
+        <button id="claude-login-submit"
+                class="h-9 px-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition">
+          전송
+        </button>
       </div>
       <pre id="claude-login-output"
-           class="flex-1 overflow-auto px-6 py-4 text-xs font-mono text-slate-700 whitespace-pre-wrap"></pre>
+           class="flex-1 overflow-auto px-6 py-4 text-xs font-mono text-slate-700 whitespace-pre-wrap min-h-[120px]"></pre>
     </div>
   </div>
 

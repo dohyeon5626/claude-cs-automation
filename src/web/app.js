@@ -1021,6 +1021,26 @@
   $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
   $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
 
+  function submitClaudeLoginCode() {
+    const input = $("claude-login-code");
+    const code = (input.value || "").trim();
+    if (!code) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      alert("서버에 연결되어 있지 않습니다.");
+      return;
+    }
+    state.ws.send(JSON.stringify({ type: "claude_login_paste", code }));
+    input.value = "";
+  }
+
+  $("claude-login-submit").addEventListener("click", submitClaudeLoginCode);
+  $("claude-login-code").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitClaudeLoginCode();
+    }
+  });
+
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {
     const token = localStorage.getItem(STORE.token);

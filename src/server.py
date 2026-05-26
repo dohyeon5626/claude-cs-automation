@@ -192,6 +192,8 @@ class WebServer:
         self._claude_status: Dict = {"logged_in": False, "detail": "unchecked", "checked_at": 0.0}
         # Lock to serialize login/logout subprocess calls (only one can run at a time)
         self._claude_login_lock = asyncio.Lock()
+        # Active `claude login` subprocess, if any — used by the paste handler
+        self._claude_login_proc = None
 
     def build_app(self) -> web.Application:
         app = web.Application(middlewares=[_no_cache_for_shell])
@@ -582,10 +584,13 @@ class WebServer:
             cmd = [self._config.claude_binary, "login"]
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
+            # Track this so a paste from the WS can be fed in. Cleared at
+            # the end of this handler.
+            self._claude_login_proc = proc
 
             url_re = re.compile(r"https?://[^\s\]\)>]+")
 
@@ -666,6 +671,8 @@ class WebServer:
                 })
                 return
 
+            self._claude_login_proc = None
+
             # Final status check (poll_task likely already did this fresh)
             status = await self._get_claude_status(force=True)
             ok = status["logged_in"]
@@ -677,6 +684,30 @@ class WebServer:
                     else f"로그인에 실패했습니다. {status.get('detail', '')}"
                 ),
                 "status": status,
+            })
+
+    async def _ws_claude_login_paste(self, ws, user, code: str):
+        """Pipe a pasted OAuth code into the in-flight `claude login` stdin."""
+        if not getattr(user, "admin", False):
+            return
+        proc = getattr(self, "_claude_login_proc", None)
+        if proc is None or proc.returncode is not None or proc.stdin is None:
+            await ws.send_json({
+                "type": "claude_login_output",
+                "line": "[코드 전송 실패: 진행 중인 로그인이 없습니다]",
+            })
+            return
+        try:
+            proc.stdin.write((code.strip() + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+            await ws.send_json({
+                "type": "claude_login_output",
+                "line": "[코드를 CLI로 전달했습니다 — 인증 처리 중...]",
+            })
+        except Exception as e:
+            await ws.send_json({
+                "type": "claude_login_output",
+                "line": f"[코드 전송 실패: {e}]",
             })
 
     # ── WebSocket: interactive chat ───────────────────────────────────────────
@@ -755,6 +786,13 @@ class WebServer:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
                         continue
                     await self._ws_claude_login(ws, user)
+                    continue
+
+                elif mtype == "claude_login_paste":
+                    if not user:
+                        continue
+                    code = str(data.get("code", ""))
+                    await self._ws_claude_login_paste(ws, user, code)
                     continue
 
                 elif mtype == "query":
