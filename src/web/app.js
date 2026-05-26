@@ -80,8 +80,16 @@
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
     s = s.replace(
-      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>'
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g,
+      (_, label, url) => {
+        // Same-origin /api/download links should open in the same tab so the
+        // browser triggers a file download instead of opening a popup tab.
+        const isDownload = url.startsWith("/api/download/");
+        const attrs = isDownload
+          ? `href="${url}" rel="noopener"`
+          : `href="${url}" target="_blank" rel="noopener"`;
+        return `<a ${attrs}>${label}</a>`;
+      }
     );
     return s;
   }
@@ -220,15 +228,84 @@
 
   function addBotMessage(md) {
     const row = document.createElement("div");
-    row.className = "flex";
+    row.className = "flex group";
+    const wrap = document.createElement("div");
+    wrap.className = "relative max-w-[82%]";
+
     const bubble = document.createElement("div");
     bubble.className =
       "bg-white border border-slate-200 shadow-sm text-slate-900 " +
-      "rounded-2xl rounded-bl-md px-4 py-3 max-w-[82%] text-sm bot-content";
+      "rounded-2xl rounded-bl-md px-4 py-3 text-sm bot-content";
     bubble.innerHTML = renderMarkdown(md);
-    row.appendChild(bubble);
+
+    wrap.appendChild(bubble);
+    wrap.appendChild(makeCopyButton(md));
+    row.appendChild(wrap);
     $("messages").appendChild(row);
     scrollMessages();
+  }
+
+  function makeCopyButton(sourceMarkdown) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "답변 복사";
+    btn.setAttribute("aria-label", "답변 복사");
+    btn.className =
+      "absolute top-1.5 right-1.5 w-7 h-7 rounded-md " +
+      "bg-white/80 backdrop-blur border border-slate-200 " +
+      "text-slate-500 hover:text-slate-900 hover:bg-white " +
+      "opacity-0 group-hover:opacity-100 focus:opacity-100 transition " +
+      "flex items-center justify-center";
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+      'class="w-3.5 h-3.5">' +
+      '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
+      '<path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+
+    btn.addEventListener("click", async () => {
+      const ok = await copyToClipboard(sourceMarkdown);
+      btn.innerHTML = ok
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+          'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+          'class="w-3.5 h-3.5 text-emerald-600"><path d="M5 13l4 4L19 7"/></svg>'
+        : '<span class="text-[10px] text-rose-500">!</span>';
+      setTimeout(() => {
+        btn.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+          'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+          'class="w-3.5 h-3.5">' +
+          '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
+          '<path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+      }, 1400);
+    });
+    return btn;
+  }
+
+  async function copyToClipboard(text) {
+    // Use the async Clipboard API where available; fall back to a hidden
+    // textarea + document.execCommand for HTTP origins (older Safari etc.)
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
   }
 
   function addErrorMessage(text) {
@@ -273,13 +350,50 @@
   function setSending(sending) {
     state.sending = sending;
     updateInputAvailable();
+    updateSendButton();
     if (!sending && state.currentService) $("chat-input").focus();
   }
 
   function updateInputAvailable() {
     const ready = !!state.currentService && !state.sending;
     $("chat-input").disabled = !ready;
-    $("send-btn").disabled = !ready;
+    // Send button stays clickable while sending — it morphs into "cancel".
+    $("send-btn").disabled = !state.currentService;
+  }
+
+  // Inline SVGs so we can swap the button glyph without an extra round-trip.
+  const SEND_ICON = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
+    'stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">' +
+    '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>'
+  );
+  const STOP_ICON = (
+    '<svg viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3">' +
+    '<rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>'
+  );
+
+  function updateSendButton() {
+    const btn = $("send-btn");
+    if (state.sending) {
+      btn.innerHTML = STOP_ICON;
+      btn.setAttribute("aria-label", "중단");
+      btn.title = "처리 중단";
+      btn.classList.remove("bg-slate-900", "hover:bg-slate-800");
+      btn.classList.add("bg-rose-500", "hover:bg-rose-600");
+    } else {
+      btn.innerHTML = SEND_ICON;
+      btn.setAttribute("aria-label", "전송");
+      btn.title = "";
+      btn.classList.remove("bg-rose-500", "hover:bg-rose-600");
+      btn.classList.add("bg-slate-900", "hover:bg-slate-800");
+    }
+  }
+
+  function cancelQuery() {
+    if (!state.sending) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    state.ws.send(JSON.stringify({ type: "cancel" }));
+    setStatus("중단 요청 중...");
   }
 
   function makeServiceIcon(svc, sizeClasses) {
@@ -587,7 +701,10 @@
     state.ws.send(JSON.stringify({ type: "query", message: text }));
   }
 
-  $("send-btn").addEventListener("click", sendQuery);
+  $("send-btn").addEventListener("click", () => {
+    if (state.sending) cancelQuery();
+    else sendQuery();
+  });
   $("chat-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
