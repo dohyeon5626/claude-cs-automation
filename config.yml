@@ -82,12 +82,15 @@ services:
 #                              예) ["order"]               → 주문만 접근
 #                              예) ["order", "knowledge"]  → 두 개 모두
 #                              예) ["*"]                    → 전체 접근
+#   admin           (선택)   true 이면 웹에서 Claude CLI 로그인/로그아웃 가능
+#                              운영자만 부여하세요 (계정 전환은 모든 사용자에 영향)
 users:
 
   - id: "admin"
     password: "changeme"
     name: "관리자"
     services: ["*"]
+    admin: true
 
   - id: "cs001"
     password: "changeme"

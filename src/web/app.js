@@ -6,6 +6,7 @@
     token: null,
     userName: "",
     userId: "",
+    userAdmin: false,
     services: [],         // [{id, name, description, logo_url}]
     currentService: null, // {id, name}
     ws: null,
@@ -15,12 +16,16 @@
     // responses get persisted to THIS cache, not whatever the user clicked
     // to in the meantime — keeps a question and its answer in the same bucket.
     pendingService: null,
+    // Claude CLI account state, refreshed via /api/claude/status
+    claudeLoggedIn: null,
+    claudeLoginInProgress: false,
   };
 
   const STORE = {
     token: "cs_token",
     userName: "cs_user_name",
     userId: "cs_user_id",
+    userAdmin: "cs_user_admin",
     services: "cs_services",
     lastService: "cs_last_service",
   };
@@ -99,17 +104,20 @@
     localStorage.setItem(STORE.token, state.token);
     localStorage.setItem(STORE.userName, state.userName);
     localStorage.setItem(STORE.userId, state.userId);
+    localStorage.setItem(STORE.userAdmin, state.userAdmin ? "1" : "");
     localStorage.setItem(STORE.services, JSON.stringify(state.services));
   }
   function clearAuth() {
     state.token = null;
     state.userName = "";
     state.userId = "";
+    state.userAdmin = false;
     state.services = [];
     state.currentService = null;
     localStorage.removeItem(STORE.token);
     localStorage.removeItem(STORE.userName);
     localStorage.removeItem(STORE.userId);
+    localStorage.removeItem(STORE.userAdmin);
     localStorage.removeItem(STORE.services);
     localStorage.removeItem(STORE.lastService);
   }
@@ -704,6 +712,10 @@
           const target = state.pendingService;
           state.pendingService = null;
           addErrorMessage(msg.message || "처리 중 오류가 발생했습니다.", target);
+          if (msg.claude_auth_required) {
+            state.claudeLoggedIn = false;
+            renderClaudeStatus();
+          }
         }
         break;
 
@@ -712,6 +724,42 @@
         // looks alive to any intermediary that drops idle sockets.
         if (state.ws && state.ws.readyState === WebSocket.OPEN) {
           state.ws.send(JSON.stringify({ type: "pong" }));
+        }
+        break;
+
+      case "claude_login_started":
+        $("claude-login-status").textContent = "출력 대기 중...";
+        break;
+
+      case "claude_login_output":
+        appendClaudeLoginOutput(msg.line || "");
+        break;
+
+      case "claude_login_done":
+        state.claudeLoginInProgress = false;
+        $("claude-login-status").textContent = msg.ok ? "완료" : "실패";
+        appendClaudeLoginOutput("\n" + (msg.message || ""));
+        if (msg.status) {
+          state.claudeLoggedIn = !!msg.status.logged_in;
+          renderClaudeStatus();
+        } else {
+          refreshClaudeStatus();
+        }
+        if (msg.ok) {
+          // Auto-close on success so the user can immediately resume querying
+          setTimeout(closeClaudeLoginModal, 1500);
+        }
+        break;
+
+      case "claude_logout_done":
+        if (msg.status) {
+          state.claudeLoggedIn = !!msg.status.logged_in;
+          renderClaudeStatus();
+        } else {
+          refreshClaudeStatus();
+        }
+        if (!msg.ok) {
+          alert("Claude 로그아웃 실패: " + (msg.message || ""));
         }
         break;
     }
@@ -775,6 +823,7 @@
       state.token = data.token;
       state.userName = data.user_name;
       state.userId = data.user_id;
+      state.userAdmin = !!data.admin;
       state.services = data.services || [];
       saveAuth();
       enterApp();
@@ -855,7 +904,89 @@
     hideEmptyState();
     updateInputAvailable();
     showView("app");
+    renderClaudeStatus();
+    refreshClaudeStatus();
   }
+
+  // ── Claude CLI account status (header) ───────────────────────────────────
+  function renderClaudeStatus() {
+    const wrap = $("claude-status");
+    const dot = $("claude-status-dot");
+    const text = $("claude-status-text");
+    const loginBtn = $("claude-login-btn");
+    const logoutBtn = $("claude-logout-btn");
+
+    // Non-admin: completely hidden — they can't act on it anyway
+    if (!state.userAdmin) {
+      wrap.classList.add("hidden");
+      wrap.classList.remove("flex");
+      return;
+    }
+    wrap.classList.remove("hidden");
+    wrap.classList.add("flex");
+
+    if (state.claudeLoggedIn === null) {
+      dot.className = "w-2 h-2 rounded-full bg-slate-300";
+      text.textContent = "Claude 확인 중...";
+      loginBtn.classList.add("hidden");
+      logoutBtn.classList.add("hidden");
+    } else if (state.claudeLoggedIn) {
+      dot.className = "w-2 h-2 rounded-full bg-emerald-500";
+      text.textContent = "Claude 연결됨";
+      loginBtn.classList.add("hidden");
+      logoutBtn.classList.remove("hidden");
+    } else {
+      dot.className = "w-2 h-2 rounded-full bg-slate-400";
+      text.textContent = "Claude 로그아웃";
+      loginBtn.classList.remove("hidden");
+      logoutBtn.classList.add("hidden");
+    }
+  }
+
+  async function refreshClaudeStatus() {
+    try {
+      const res = await fetch("/api/claude/status");
+      if (!res.ok) return;
+      const data = await res.json();
+      state.claudeLoggedIn = !!data.logged_in;
+      renderClaudeStatus();
+    } catch (e) { /* offline — leave previous state */ }
+  }
+
+  function openClaudeLoginModal() {
+    if (state.claudeLoginInProgress) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      alert("서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    $("claude-login-output").textContent = "";
+    $("claude-login-status").textContent = "준비 중...";
+    $("claude-login-modal").classList.remove("hidden");
+    state.claudeLoginInProgress = true;
+    state.ws.send(JSON.stringify({ type: "claude_login" }));
+  }
+
+  function closeClaudeLoginModal() {
+    $("claude-login-modal").classList.add("hidden");
+  }
+
+  function appendClaudeLoginOutput(line) {
+    const el = $("claude-login-output");
+    // Auto-linkify URLs so the operator can just click instead of selecting
+    const safe = line.replace(/[<>&]/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+    const html = safe.replace(/(https?:\/\/[^\s]+)/g,
+      '<a href="$1" target="_blank" rel="noopener" class="text-indigo-600 underline">$1</a>');
+    el.innerHTML += html + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
+
+  $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
+  $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
+  $("claude-logout-btn").addEventListener("click", () => {
+    if (!confirm("Claude CLI를 로그아웃하시겠습니까? 로그아웃 동안 모든 질문이 거절됩니다.")) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    state.ws.send(JSON.stringify({ type: "claude_logout" }));
+  });
 
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {
@@ -871,6 +1002,7 @@
     state.token = token;
     state.userName = localStorage.getItem(STORE.userName) || "";
     state.userId = localStorage.getItem(STORE.userId) || "";
+    state.userAdmin = !!localStorage.getItem(STORE.userAdmin);
     try {
       state.services = JSON.parse(localStorage.getItem(STORE.services) || "[]");
     } catch (e) {

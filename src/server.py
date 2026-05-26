@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import secrets
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -13,7 +14,7 @@ from typing import Dict, List, Tuple
 from aiohttp import WSMsgType, web
 from openpyxl import Workbook
 
-from .agent import ClaudeAgent, UserSession
+from .agent import ClaudeAgent, UserSession, check_claude_cli_authenticated
 from .auth import Authenticator
 from .config import AppConfig
 from .service import Service
@@ -53,6 +54,12 @@ _BAD_SHEET_CHARS = re.compile(r"[\\/?*\[\]:]")
 # Content types for served downloads
 _CT_CSV = "text/csv; charset=utf-8"
 _CT_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# Claude CLI status cache — login check spawns a subprocess (slow), so
+# memoize the result for 60 seconds. Invalidated on login/logout actions.
+_CLAUDE_STATUS_TTL = 60.0
+# Claude login subprocess timeout — OAuth typically completes in ~30s
+_CLAUDE_LOGIN_TIMEOUT = 300.0  # 5 minutes
 
 
 _SHELL_PATHS = frozenset({"/", "/app.js", "/style.css", "/sw.js", "/manifest.json"})
@@ -182,6 +189,10 @@ class WebServer:
         # token -> {filename, content (bytes), expires (epoch sec)}
         # In-memory only — survives until the server restarts.
         self._downloads: Dict[str, Dict] = {}
+        # Claude CLI login status: {logged_in: bool, detail: str, checked_at: float}
+        self._claude_status: Dict = {"logged_in": False, "detail": "unchecked", "checked_at": 0.0}
+        # Lock to serialize login/logout subprocess calls (only one can run at a time)
+        self._claude_login_lock = asyncio.Lock()
 
     def build_app(self) -> web.Application:
         app = web.Application(middlewares=[_no_cache_for_shell])
@@ -198,6 +209,7 @@ class WebServer:
                 web.post("/api/login", self._api_login),
                 web.post("/api/query", self._api_query),
                 web.get("/api/download/{token}", self._serve_download),
+                web.get("/api/claude/status", self._api_claude_status),
                 web.get("/ws", self._handle_ws),
             ]
         )
@@ -357,6 +369,7 @@ class WebServer:
                 "token": token,
                 "user_id": user.id,
                 "user_name": user.name,
+                "admin": bool(getattr(user, "admin", False)),
                 "services": services,
             }
         )
@@ -506,6 +519,150 @@ class WebServer:
             },
         )
 
+    # ── Claude CLI account management ─────────────────────────────────────────
+
+    async def _api_claude_status(self, request):
+        """REST endpoint for the header status indicator on page load."""
+        # Allow anyone (even unauthenticated) so the login view could also
+        # show "Claude 로그아웃됨" if we ever want — currently only used by
+        # the authenticated app shell.
+        status = await self._get_claude_status(force=False)
+        return web.json_response(status)
+
+    async def _get_claude_status(self, *, force: bool) -> Dict:
+        """
+        Cached "is Claude logged in?" check. Set force=True to bypass cache
+        (used right after a login/logout to surface the new state).
+        """
+        now = time.time()
+        if not force and (now - self._claude_status["checked_at"] < _CLAUDE_STATUS_TTL):
+            return dict(self._claude_status)
+
+        # Run the ping on the executor so we don't block the event loop
+        loop = asyncio.get_running_loop()
+        logged_in, detail = await loop.run_in_executor(
+            None,
+            check_claude_cli_authenticated,
+            self._config.claude_model,
+            self._config.claude_binary,
+            10,  # quick timeout — UI is waiting
+        )
+        self._claude_status = {
+            "logged_in": logged_in,
+            "detail": detail,
+            "checked_at": now,
+        }
+        return dict(self._claude_status)
+
+    async def _ws_claude_login(self, ws, user):
+        """
+        Stream `claude login` subprocess output back to the admin's WS so they
+        can copy the OAuth URL and complete sign-in in their browser. The
+        Claude CLI prints the URL within the first few lines and waits for
+        the OAuth callback before exiting.
+        """
+        if not getattr(user, "admin", False):
+            await ws.send_json({
+                "type": "claude_login_done",
+                "ok": False,
+                "message": "Claude 로그인 권한이 없습니다.",
+            })
+            return
+
+        if self._claude_login_lock.locked():
+            await ws.send_json({
+                "type": "claude_login_done",
+                "ok": False,
+                "message": "다른 관리자가 이미 로그인 작업을 진행 중입니다.",
+            })
+            return
+
+        async with self._claude_login_lock:
+            await ws.send_json({"type": "claude_login_started"})
+
+            cmd = [self._config.claude_binary, "login"]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+
+            async def pump():
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        return
+                    text = line.decode("utf-8", errors="replace").rstrip("\n")
+                    if ws.closed:
+                        return
+                    await ws.send_json({"type": "claude_login_output", "line": text})
+
+            pump_task = asyncio.create_task(pump())
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=_CLAUDE_LOGIN_TIMEOUT)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                pump_task.cancel()
+                await ws.send_json({
+                    "type": "claude_login_done",
+                    "ok": False,
+                    "message": "로그인 시간이 초과되었습니다 (5분).",
+                })
+                return
+            finally:
+                pump_task.cancel()
+
+            ok = proc.returncode == 0
+            # Refresh status cache so the next /api/claude/status reflects reality
+            status = await self._get_claude_status(force=True)
+            await ws.send_json({
+                "type": "claude_login_done",
+                "ok": ok and status["logged_in"],
+                "message": (
+                    "로그인되었습니다." if ok and status["logged_in"]
+                    else f"로그인에 실패했습니다 (exit={proc.returncode}). {status.get('detail', '')}"
+                ),
+                "status": status,
+            })
+
+    async def _ws_claude_logout(self, ws, user):
+        if not getattr(user, "admin", False):
+            await ws.send_json({
+                "type": "claude_logout_done",
+                "ok": False,
+                "message": "Claude 로그아웃 권한이 없습니다.",
+            })
+            return
+
+        loop = asyncio.get_running_loop()
+        def _run():
+            return subprocess.run(
+                [self._config.claude_binary, "logout"],
+                capture_output=True, text=True, timeout=30,
+            )
+        try:
+            proc = await loop.run_in_executor(None, _run)
+        except Exception as e:
+            await ws.send_json({
+                "type": "claude_logout_done",
+                "ok": False,
+                "message": f"로그아웃 실행 실패: {e}",
+            })
+            return
+
+        status = await self._get_claude_status(force=True)
+        await ws.send_json({
+            "type": "claude_logout_done",
+            "ok": proc.returncode == 0,
+            "message": (
+                "로그아웃되었습니다." if proc.returncode == 0
+                else (proc.stderr or "").strip() or "로그아웃 실패"
+            ),
+            "status": status,
+        })
+
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
     async def _handle_ws(self, request):
@@ -573,6 +730,20 @@ class WebServer:
                     # No in-flight query → silently ignore (idempotent)
                     continue
 
+                elif mtype == "claude_login":
+                    if not user:
+                        await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
+                        continue
+                    await self._ws_claude_login(ws, user)
+                    continue
+
+                elif mtype == "claude_logout":
+                    if not user:
+                        await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
+                        continue
+                    await self._ws_claude_logout(ws, user)
+                    continue
+
                 elif mtype == "query":
                     if not user or not session:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
@@ -595,6 +766,16 @@ class WebServer:
                         await ws.send_json({
                             "type": "error",
                             "message": "이전 요청이 처리 중입니다. 완료 후 다시 시도하거나 중단 버튼을 눌러 주세요.",
+                        })
+                        continue
+                    # Bail early when Claude is logged out — no point spawning
+                    # an agent task that will fail on the first CLI call.
+                    status = await self._get_claude_status(force=False)
+                    if not status["logged_in"]:
+                        await ws.send_json({
+                            "type": "error",
+                            "message": "Claude 로그인이 필요합니다. 헤더의 'Claude 로그인' 버튼을 관리자가 눌러 주세요.",
+                            "claude_auth_required": True,
                         })
                         continue
                     # Spawn as a task so this receive loop keeps running and

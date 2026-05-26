@@ -5,7 +5,11 @@ from typing import Dict, Optional
 
 from aiohttp import web
 
-from .agent import ClaudeAgent, check_claude_cli
+from .agent import (
+    ClaudeAgent,
+    check_claude_cli_authenticated,
+    check_claude_cli_installed,
+)
 from .auth import Authenticator
 from .config import AppConfig, load_config
 from .database import Database
@@ -58,12 +62,26 @@ def run_startup_checks(config: AppConfig) -> Dict[str, Service]:
     except RuntimeError as e:
         _fail(str(e))
 
-    print("[공통] Claude CLI 확인...", end=" ", flush=True)
+    print("[공통] Claude CLI 설치 확인...", end=" ", flush=True)
     try:
-        check_claude_cli(config.claude_model, config.claude_binary)
+        check_claude_cli_installed(config.claude_binary)
         print("OK")
     except RuntimeError as e:
         _fail(str(e))
+
+    print("[공통] Claude CLI 로그인 확인...", end=" ", flush=True)
+    logged_in, detail = check_claude_cli_authenticated(
+        config.claude_model, config.claude_binary
+    )
+    if logged_in:
+        print("OK")
+    else:
+        # Soft failure — server still starts. Admins can log in from the
+        # web UI's header button once it's up.
+        print("로그아웃 상태")
+        print(f"   ↳ {detail}")
+        print("   ↳ 서버는 계속 실행됩니다. 웹에서 관리자 계정으로 접속해")
+        print("     헤더의 'Claude 로그인' 버튼을 눌러 로그인하세요.")
 
     services: Dict[str, Service] = {}
     for svc in config.services:

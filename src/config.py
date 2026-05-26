@@ -41,6 +41,7 @@ class UserConfig:
     password: str
     name: str
     services: List[str]  # allowed service ids, or ["*"] for all
+    admin: bool = False  # may manage Claude CLI login/logout from the web UI
 
 
 @dataclass
@@ -79,6 +80,7 @@ def load_config(path: str = "config.yml") -> AppConfig:
                 password=str(u["password"]),
                 name=str(u.get("name", u["id"])),
                 services=[str(x) for x in svc],
+                admin=bool(u.get("admin", False)),
             )
         )
 

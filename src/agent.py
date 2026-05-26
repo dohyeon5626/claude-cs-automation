@@ -36,11 +36,11 @@ _SECURITY_RULES = (
 )
 
 
-def check_claude_cli(model: str, binary: str = "claude"):
+def check_claude_cli_installed(binary: str = "claude"):
     """
-    Verify the Claude CLI is installed and authenticated.
-    `binary` is the command name or absolute path of the claude executable.
-    Raises RuntimeError on any failure (server must not start).
+    Verify the Claude CLI binary exists and runs. Raises RuntimeError on
+    failure — without a working CLI the server can't process any query.
+    Does NOT check login state (use check_claude_cli_authenticated for that).
     """
     try:
         version = subprocess.run(
@@ -61,27 +61,37 @@ def check_claude_cli(model: str, binary: str = "claude"):
     if version.returncode != 0:
         raise RuntimeError(f"Claude CLI 실행 실패: {version.stderr.strip()}")
 
+
+def check_claude_cli_authenticated(
+    model: str, binary: str = "claude", timeout: int = 30,
+) -> Tuple[bool, str]:
+    """
+    Lightweight ping that returns (logged_in, detail).
+    Never raises — caller decides whether the result is fatal.
+    """
     cmd = [binary, "-p", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
     try:
         ping = subprocess.run(
-            cmd, input="OK", capture_output=True, text=True, timeout=120
+            cmd, input="OK", capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Claude CLI 인증 확인 중 시간이 초과되었습니다.")
+        return False, "응답 시간 초과"
+    except Exception as e:
+        return False, f"실행 실패: {e}"
 
     if ping.returncode != 0:
-        raise RuntimeError(
-            "Claude CLI 실행/인증에 실패했습니다. 'claude' 로그인 상태를 확인하세요.\n"
-            f"  {ping.stderr.strip()}"
-        )
+        return False, (ping.stderr or "").strip() or "비인가"
+
     try:
         data = json.loads(ping.stdout)
     except json.JSONDecodeError:
-        raise RuntimeError("Claude CLI 응답을 해석할 수 없습니다.")
+        return False, "응답 해석 실패"
+
     if data.get("is_error"):
-        raise RuntimeError(f"Claude CLI 오류: {data.get('result', '')}")
+        return False, str(data.get("result", "오류"))
+    return True, "OK"
 
 
 class CancelledByUser(Exception):
