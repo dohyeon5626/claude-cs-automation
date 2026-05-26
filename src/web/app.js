@@ -11,6 +11,10 @@
     ws: null,
     sending: false,
     messages: [],         // current view: [{role, content, ts}]
+    // Service id the currently in-flight query was issued from. Late-arriving
+    // responses get persisted to THIS cache, not whatever the user clicked
+    // to in the meantime — keeps a question and its answer in the same bucket.
+    pendingService: null,
   };
 
   const STORE = {
@@ -256,8 +260,8 @@
     m.scrollTop = m.scrollHeight;
   }
 
-  function addUserMessage(text) {
-    pushAndRender({ role: "user", content: text, ts: Date.now() });
+  function addUserMessage(text, serviceId) {
+    pushAndRender({ role: "user", content: text, ts: Date.now() }, serviceId);
   }
   function addUserMessageDOM(text) {
     const row = document.createElement("div");
@@ -272,8 +276,8 @@
     scrollMessages();
   }
 
-  function addBotMessage(md) {
-    pushAndRender({ role: "bot", content: md, ts: Date.now() });
+  function addBotMessage(md, serviceId) {
+    pushAndRender({ role: "bot", content: md, ts: Date.now() }, serviceId);
   }
   function addBotMessageDOM(md) {
     const row = document.createElement("div");
@@ -357,8 +361,8 @@
     }
   }
 
-  function addErrorMessage(text) {
-    pushAndRender({ role: "error", content: text, ts: Date.now() });
+  function addErrorMessage(text, serviceId) {
+    pushAndRender({ role: "error", content: text, ts: Date.now() }, serviceId);
   }
   function addErrorMessageDOM(text) {
     const row = document.createElement("div");
@@ -383,10 +387,28 @@
     $("messages").appendChild(row);
   }
 
-  function pushAndRender(msg) {
-    state.messages.push(msg);
-    renderMessageDOM(msg);
-    if (state.currentService) saveHistory(state.currentService.id);
+  function pushAndRender(msg, serviceId) {
+    // Default to the user's current view, but allow callers to pin the
+    // message to a specific service (used for late-arriving responses
+    // after the user has already navigated away to another service).
+    const target = serviceId || (state.currentService && state.currentService.id);
+    if (!target) return;
+
+    // Only render in the DOM when the message belongs to the visible service.
+    if (state.currentService && state.currentService.id === target) {
+      state.messages.push(msg);
+      renderMessageDOM(msg);
+      saveHistory(target);
+    } else {
+      // User has switched away — append to that service's stored history
+      // without touching state.messages (which reflects the visible view).
+      const existing = loadHistory(target);
+      existing.push(msg);
+      const prevView = state.messages;
+      state.messages = existing;
+      saveHistory(target);
+      state.messages = prevView;
+    }
   }
 
   function renderMessageDOM(msg) {
@@ -587,6 +609,12 @@
   function selectService(id) {
     if (state.currentService && state.currentService.id === id) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    // If a query is in flight, cancel it before switching so the answer
+    // lands on the originating service's history (via pendingService) and
+    // the next query in the new service starts with clean state.
+    if (state.sending) {
+      state.ws.send(JSON.stringify({ type: "cancel" }));
+    }
     state.ws.send(JSON.stringify({ type: "select_service", service_id: id }));
   }
 
@@ -658,19 +686,24 @@
         setStatus(msg.message || "");
         break;
 
-      case "response":
+      case "response": {
         hideTypingBubble();
         setStatus("");
         setSending(false);
-        addBotMessage(msg.message || "");
+        const target = state.pendingService;
+        state.pendingService = null;
+        addBotMessage(msg.message || "", target);
         break;
+      }
 
       case "error":
         if (!views.app.classList.contains("hidden")) {
           hideTypingBubble();
           setStatus("");
           setSending(false);
-          addErrorMessage(msg.message || "처리 중 오류가 발생했습니다.");
+          const target = state.pendingService;
+          state.pendingService = null;
+          addErrorMessage(msg.message || "처리 중 오류가 발생했습니다.", target);
         }
         break;
 
@@ -758,6 +791,7 @@
     clearAllChatHistory();   // wipe per-service caches before user list changes
     clearAuth();
     state.messages = [];
+    state.pendingService = null;
     $("login-pw").value = "";
     $("login-error").textContent = "";
     enableLoginButton();
@@ -786,7 +820,10 @@
     input.value = "";
     autoGrow(input);
     hideEmptyState();
-    addUserMessage(text);
+    // Pin this turn to the originating service so a late response can't
+    // land in whichever service the user clicked over to in the meantime.
+    state.pendingService = state.currentService.id;
+    addUserMessage(text, state.pendingService);
     showTypingBubble();
     setSending(true);
     setStatus("");
