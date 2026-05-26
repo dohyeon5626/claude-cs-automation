@@ -80,17 +80,13 @@
           <div id="chat-description" class="text-xs text-slate-500 truncate"></div>
         </div>
 
-        <!-- Claude CLI 계정 상태 (관리자만 클릭 가능) -->
+        <!-- Claude CLI 계정 상태 (관리자만 보임) -->
         <div id="claude-status" class="hidden items-center gap-2 shrink-0">
           <span id="claude-status-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
           <span id="claude-status-text" class="text-xs text-slate-500">Claude 확인 중...</span>
           <button id="claude-login-btn"
-                  class="hidden text-xs font-medium text-slate-700 hover:text-slate-900 px-2 py-1 rounded border border-slate-200 hover:border-slate-300 transition">
+                  class="text-xs font-medium text-slate-700 hover:text-slate-900 px-2 py-1 rounded border border-slate-200 hover:border-slate-300 transition">
             로그인
-          </button>
-          <button id="claude-logout-btn"
-                  class="hidden text-xs text-slate-500 hover:text-slate-700 px-2 py-1 rounded border border-slate-200 hover:border-slate-300 transition">
-            로그아웃
           </button>
         </div>
       </header>
@@ -135,8 +131,8 @@
         <button id="claude-login-close" class="ml-auto text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
       </div>
       <div class="px-6 py-3 text-xs text-slate-600 bg-slate-50 border-b border-slate-200">
-        아래 출력에 표시되는 URL을 새 탭에서 열어 OAuth 로그인을 완료하세요.
-        완료되면 이 창은 자동으로 닫힙니다.
+        새 탭에서 OAuth 로그인을 완료해 주세요. 완료되면 이 창은 자동으로 닫힙니다.
+        탭이 자동으로 열리지 않으면 아래 출력에 표시되는 URL을 직접 클릭하세요.
       </div>
       <pre id="claude-login-output"
            class="flex-1 overflow-auto px-6 py-4 text-xs font-mono text-slate-700 whitespace-pre-wrap"></pre>

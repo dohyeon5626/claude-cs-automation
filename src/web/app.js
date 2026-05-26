@@ -647,6 +647,14 @@
   function handleServerMessage(msg) {
     switch (msg.type) {
       case "auth_success": {
+        // Server is source of truth for admin status — refresh in case our
+        // cached localStorage value was written before the admin flag existed
+        // (or the operator just promoted/demoted the user in config.yml).
+        if (typeof msg.admin === "boolean") {
+          state.userAdmin = msg.admin;
+          localStorage.setItem(STORE.userAdmin, msg.admin ? "1" : "");
+          renderClaudeStatus();
+        }
         // Auto-select last-used (or first) service
         const last = localStorage.getItem(STORE.lastService);
         const pick = state.services.find((s) => s.id === last) || state.services[0];
@@ -728,7 +736,24 @@
         break;
 
       case "claude_login_started":
-        $("claude-login-status").textContent = "출력 대기 중...";
+        // Status text already set by openClaudeLoginModal — no change here
+        break;
+
+      case "claude_login_url":
+        // Navigate the pre-opened tab to the real OAuth URL. If the tab
+        // was blocked or already closed, fall back to opening here (may be
+        // blocked too) and surface the URL in the modal for manual click.
+        if (claudeLoginTab && !claudeLoginTab.closed) {
+          try {
+            claudeLoginTab.location.href = msg.url;
+          } catch (e) { /* cross-origin once it navigates — ignore */ }
+        } else {
+          const opened = window.open(msg.url, "_blank");
+          if (!opened) {
+            $("claude-login-status").textContent = "팝업 차단됨 — 아래 URL을 직접 여세요";
+          }
+        }
+        appendClaudeLoginOutput("[인증 URL] " + msg.url);
         break;
 
       case "claude_login_output":
@@ -745,23 +770,13 @@
         } else {
           refreshClaudeStatus();
         }
+        claudeLoginTab = null;  // OAuth flow done — drop the handle
         if (msg.ok) {
           // Auto-close on success so the user can immediately resume querying
           setTimeout(closeClaudeLoginModal, 1500);
         }
         break;
 
-      case "claude_logout_done":
-        if (msg.status) {
-          state.claudeLoggedIn = !!msg.status.logged_in;
-          renderClaudeStatus();
-        } else {
-          refreshClaudeStatus();
-        }
-        if (!msg.ok) {
-          alert("Claude 로그아웃 실패: " + (msg.message || ""));
-        }
-        break;
     }
   }
 
@@ -914,9 +929,8 @@
     const dot = $("claude-status-dot");
     const text = $("claude-status-text");
     const loginBtn = $("claude-login-btn");
-    const logoutBtn = $("claude-logout-btn");
 
-    // Non-admin: completely hidden — they can't act on it anyway
+    // Non-admin: pill is completely hidden — they can't act on it anyway
     if (!state.userAdmin) {
       wrap.classList.add("hidden");
       wrap.classList.remove("flex");
@@ -928,18 +942,15 @@
     if (state.claudeLoggedIn === null) {
       dot.className = "w-2 h-2 rounded-full bg-slate-300";
       text.textContent = "Claude 확인 중...";
-      loginBtn.classList.add("hidden");
-      logoutBtn.classList.add("hidden");
+      loginBtn.textContent = "로그인";
     } else if (state.claudeLoggedIn) {
       dot.className = "w-2 h-2 rounded-full bg-emerald-500";
       text.textContent = "Claude 연결됨";
-      loginBtn.classList.add("hidden");
-      logoutBtn.classList.remove("hidden");
+      loginBtn.textContent = "새롭게 로그인";
     } else {
       dot.className = "w-2 h-2 rounded-full bg-slate-400";
       text.textContent = "Claude 로그아웃";
-      loginBtn.classList.remove("hidden");
-      logoutBtn.classList.add("hidden");
+      loginBtn.textContent = "로그인";
     }
   }
 
@@ -953,14 +964,41 @@
     } catch (e) { /* offline — leave previous state */ }
   }
 
+  // Pre-opened tab for the Claude OAuth flow. Opened synchronously in the
+  // click handler (so popup blockers don't kill it), then navigated to the
+  // real URL once the CLI prints it.
+  let claudeLoginTab = null;
+
   function openClaudeLoginModal() {
     if (state.claudeLoginInProgress) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       alert("서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.");
       return;
     }
+
+    // Open the tab now while we're still in the click handler — browsers
+    // only permit window.open() in direct response to a user gesture.
+    try {
+      claudeLoginTab = window.open("about:blank", "_blank");
+      if (claudeLoginTab) {
+        claudeLoginTab.document.write(
+          '<!doctype html><meta charset="utf-8">' +
+          '<title>Claude 로그인 준비 중...</title>' +
+          '<style>body{font-family:system-ui,-apple-system,sans-serif;' +
+          'padding:40px;color:#475569;line-height:1.6}' +
+          'h2{color:#0f172a;font-size:18px;margin:0 0 8px}</style>' +
+          '<h2>Claude 로그인 페이지를 준비 중입니다...</h2>' +
+          '<p>인증 URL이 준비되면 자동으로 이동합니다. 잠시만 기다려 주세요.</p>'
+        );
+      }
+    } catch (e) {
+      claudeLoginTab = null;
+    }
+
     $("claude-login-output").textContent = "";
-    $("claude-login-status").textContent = "준비 중...";
+    $("claude-login-status").textContent = (
+      claudeLoginTab ? "새 탭에서 인증을 진행해 주세요" : "팝업이 차단됨 — 아래 URL을 직접 여세요"
+    );
     $("claude-login-modal").classList.remove("hidden");
     state.claudeLoginInProgress = true;
     state.ws.send(JSON.stringify({ type: "claude_login" }));
@@ -982,11 +1020,6 @@
 
   $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
   $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
-  $("claude-logout-btn").addEventListener("click", () => {
-    if (!confirm("Claude CLI를 로그아웃하시겠습니까? 로그아웃 동안 모든 질문이 거절됩니다.")) return;
-    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-    state.ws.send(JSON.stringify({ type: "claude_logout" }));
-  });
 
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {

@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import secrets
-import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -588,7 +587,10 @@ class WebServer:
                 stderr=asyncio.subprocess.STDOUT,
             )
 
+            url_re = re.compile(r"https?://[^\s\]\)>]+")
+
             async def pump():
+                url_sent = False
                 while True:
                     line = await proc.stdout.readline()
                     if not line:
@@ -596,6 +598,16 @@ class WebServer:
                     text = line.decode("utf-8", errors="replace").rstrip("\n")
                     if ws.closed:
                         return
+                    # First URL we see → tell the client immediately so its
+                    # pre-opened tab can navigate to it.
+                    if not url_sent:
+                        m = url_re.search(text)
+                        if m:
+                            await ws.send_json({
+                                "type": "claude_login_url",
+                                "url": m.group(0),
+                            })
+                            url_sent = True
                     await ws.send_json({"type": "claude_login_output", "line": text})
 
             pump_task = asyncio.create_task(pump())
@@ -626,42 +638,6 @@ class WebServer:
                 ),
                 "status": status,
             })
-
-    async def _ws_claude_logout(self, ws, user):
-        if not getattr(user, "admin", False):
-            await ws.send_json({
-                "type": "claude_logout_done",
-                "ok": False,
-                "message": "Claude 로그아웃 권한이 없습니다.",
-            })
-            return
-
-        loop = asyncio.get_running_loop()
-        def _run():
-            return subprocess.run(
-                [self._config.claude_binary, "logout"],
-                capture_output=True, text=True, timeout=30,
-            )
-        try:
-            proc = await loop.run_in_executor(None, _run)
-        except Exception as e:
-            await ws.send_json({
-                "type": "claude_logout_done",
-                "ok": False,
-                "message": f"로그아웃 실행 실패: {e}",
-            })
-            return
-
-        status = await self._get_claude_status(force=True)
-        await ws.send_json({
-            "type": "claude_logout_done",
-            "ok": proc.returncode == 0,
-            "message": (
-                "로그아웃되었습니다." if proc.returncode == 0
-                else (proc.stderr or "").strip() or "로그아웃 실패"
-            ),
-            "status": status,
-        })
 
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
@@ -699,7 +675,11 @@ class WebServer:
                         await ws.close()
                         break
                     session = UserSession(user_id=user.id)
-                    await ws.send_json({"type": "auth_success", "user_id": user.id})
+                    await ws.send_json({
+                        "type": "auth_success",
+                        "user_id": user.id,
+                        "admin": bool(getattr(user, "admin", False)),
+                    })
                     logger.info(f"WebSocket authenticated: {user.id}")
 
                 elif mtype == "select_service":
@@ -735,13 +715,6 @@ class WebServer:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
                         continue
                     await self._ws_claude_login(ws, user)
-                    continue
-
-                elif mtype == "claude_logout":
-                    if not user:
-                        await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
-                        continue
-                    await self._ws_claude_logout(ws, user)
                     continue
 
                 elif mtype == "query":
