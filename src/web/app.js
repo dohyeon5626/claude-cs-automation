@@ -1015,6 +1015,28 @@
     return term;
   }
 
+  // Document-level paste handler — xterm's built-in paste sometimes misses
+  // events inside a modal (the helper textarea loses focus to the modal
+  // backdrop). Catching at capture phase lets us forward Cmd+V / right-click
+  // paste no matter what currently holds focus.
+  document.addEventListener("paste", (e) => {
+    if ($("claude-login-modal").classList.contains("hidden")) return;
+    if (!claudeLoginTerm) return;
+    const text = (e.clipboardData || window.clipboardData).getData("text");
+    if (!text) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      // Route through xterm so bracketed-paste mode is respected; onData
+      // then fires and forwards the (possibly wrapped) bytes to the PTY.
+      claudeLoginTerm.paste(text);
+    } catch (err) {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: "claude_login_input", data: text }));
+      }
+    }
+  }, true);
+
   function openClaudeLoginModal() {
     if (state.claudeLoginInProgress) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {

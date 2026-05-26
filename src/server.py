@@ -9,6 +9,8 @@ import os
 import pty
 import re
 import secrets
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -76,6 +78,22 @@ def _set_pty_size(fd: int, rows: int, cols: int):
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     except Exception:
         pass
+
+
+def _create_noop_browser_dir() -> str:
+    """
+    Build a tempdir of stub `open`/`xdg-open`/etc. binaries that do nothing.
+    Prepending this to PATH stops `claude /login` from auto-launching a
+    browser on the server — the operator clicks the URL inside the xterm
+    modal instead, opening it in their own browser tab.
+    """
+    d = tempfile.mkdtemp(prefix="cs-claude-noopen-")
+    for name in ("open", "xdg-open", "wslview", "sensible-browser", "x-www-browser"):
+        p = os.path.join(d, name)
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(p, 0o755)
+    return d
 
 
 @web.middleware
@@ -610,10 +628,22 @@ class WebServer:
             # fails to lay out and silently ignores keyboard input.
             _set_pty_size(slave_fd, max(rows, 10), max(cols, 40))
 
+            # Suppress browser auto-launch on the server so the operator
+            # clicks the URL in the xterm modal (opens in THEIR browser tab)
+            # instead of a tab popping up on the host machine.
+            noop_dir = None
+            try:
+                noop_dir = _create_noop_browser_dir()
+            except Exception as e:
+                logger.warning(f"noop-browser dir failed: {e}")
+
             env = os.environ.copy()
             env.setdefault("TERM", "xterm-256color")
             env["LINES"] = str(max(rows, 10))
             env["COLUMNS"] = str(max(cols, 40))
+            env["BROWSER"] = "true"  # respected by many CLIs
+            if noop_dir:
+                env["PATH"] = noop_dir + os.pathsep + env.get("PATH", "")
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -627,6 +657,8 @@ class WebServer:
             except Exception as e:
                 os.close(master_fd)
                 os.close(slave_fd)
+                if noop_dir:
+                    shutil.rmtree(noop_dir, ignore_errors=True)
                 await ws.send_json({
                     "type": "claude_login_done",
                     "ok": False,
@@ -732,6 +764,9 @@ class WebServer:
                 os.close(master_fd)
             except OSError:
                 pass
+
+            if noop_dir:
+                shutil.rmtree(noop_dir, ignore_errors=True)
 
             self._claude_login_proc = None
             self._claude_login_master_fd = None
