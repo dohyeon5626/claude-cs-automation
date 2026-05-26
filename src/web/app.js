@@ -952,12 +952,26 @@
   // xterm.js terminal that mirrors the Claude CLI subprocess running on
   // the server. Initialized on first modal open; reused after that.
   let claudeLoginTerm = null;
+  let claudeFitAddon = null;
+  let claudeResizeHandler = null;
 
   function b64ToBytes(b64) {
     const bin = atob(b64);
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     return arr;
+  }
+
+  function sendClaudeResize() {
+    if (!claudeLoginTerm || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    if (claudeFitAddon) {
+      try { claudeFitAddon.fit(); } catch (e) {}
+    }
+    state.ws.send(JSON.stringify({
+      type: "claude_login_resize",
+      cols: claudeLoginTerm.cols,
+      rows: claudeLoginTerm.rows,
+    }));
   }
 
   function ensureClaudeTerminal() {
@@ -972,19 +986,30 @@
       fontFamily: 'Menlo, Consolas, "SF Mono", monospace',
       theme: { background: "#1e1e1e", foreground: "#e5e7eb" },
       convertEol: true,
+      allowProposedApi: true,
     });
-    // Web-links addon makes URLs in the terminal clickable
     try {
       if (window.WebLinksAddon) term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
     } catch (e) {}
+    try {
+      if (window.FitAddon) {
+        claudeFitAddon = new window.FitAddon.FitAddon();
+        term.loadAddon(claudeFitAddon);
+      }
+    } catch (e) {}
+
     term.open($("claude-login-terminal"));
 
-    // Forward every keystroke (or paste) to the server PTY
+    // Forward every keystroke (and paste) to the server PTY
     term.onData((data) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: "claude_login_input", data }));
       }
     });
+
+    // Keep PTY size in sync when the browser window changes
+    claudeResizeHandler = () => sendClaudeResize();
+    window.addEventListener("resize", claudeResizeHandler);
 
     claudeLoginTerm = term;
     return term;
@@ -1002,16 +1027,28 @@
     const term = ensureClaudeTerminal();
     if (!term) return;
     term.clear();
-    term.focus();
 
-    state.claudeLoginInProgress = true;
-    state.ws.send(JSON.stringify({ type: "claude_login" }));
+    // Modal just became visible — fit to container, then tell the server
+    // what size to make the PTY so Claude TUI renders correctly. Without
+    // this Claude often refuses to handle keyboard input.
+    requestAnimationFrame(() => {
+      if (claudeFitAddon) {
+        try { claudeFitAddon.fit(); } catch (e) {}
+      }
+      state.claudeLoginInProgress = true;
+      state.ws.send(JSON.stringify({
+        type: "claude_login",
+        cols: term.cols,
+        rows: term.rows,
+      }));
+      // Tiny delay so the click-to-show transition doesn't steal focus
+      setTimeout(() => term.focus(), 80);
+    });
   }
 
   function closeClaudeLoginModal() {
     $("claude-login-modal").classList.add("hidden");
     if (state.claudeLoginInProgress) {
-      // Tell server to kill the subprocess so we don't leave a dangling TUI
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: "claude_login_cancel" }));
       }
@@ -1021,6 +1058,10 @@
 
   $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
   $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
+  // Refocus when user clicks anywhere inside the terminal area
+  $("claude-login-terminal").addEventListener("click", () => {
+    if (claudeLoginTerm) claudeLoginTerm.focus();
+  });
 
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {

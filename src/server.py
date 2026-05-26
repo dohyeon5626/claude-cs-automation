@@ -67,6 +67,17 @@ _CLAUDE_LOGIN_TIMEOUT = 300.0  # 5 minutes
 _SHELL_PATHS = frozenset({"/", "/app.js", "/style.css", "/sw.js", "/manifest.json"})
 
 
+def _set_pty_size(fd: int, rows: int, cols: int):
+    """Tell the kernel the new (rows, cols) of a PTY via TIOCSWINSZ ioctl."""
+    try:
+        import fcntl
+        import struct
+        import termios
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    except Exception:
+        pass
+
+
 @web.middleware
 async def _no_cache_for_shell(request, handler):
     """
@@ -560,12 +571,10 @@ class WebServer:
         }
         return dict(self._claude_status)
 
-    async def _ws_claude_login(self, ws, user):
+    async def _ws_claude_login(self, ws, user, cols: int = 80, rows: int = 24):
         """
-        Stream `claude login` subprocess output back to the admin's WS so they
-        can copy the OAuth URL and complete sign-in in their browser. The
-        Claude CLI prints the URL within the first few lines and waits for
-        the OAuth callback before exiting.
+        Spawn the Claude CLI in a PTY and pipe it both directions to the
+        browser's xterm.js, so the admin can drive /login interactively.
         """
         if not getattr(user, "admin", False):
             await ws.send_json({
@@ -596,8 +605,15 @@ class WebServer:
                 })
                 return
 
+            # Tell the kernel how big the terminal is BEFORE spawning so
+            # Claude's ink TUI sees a sane geometry — without this it often
+            # fails to lay out and silently ignores keyboard input.
+            _set_pty_size(slave_fd, max(rows, 10), max(cols, 40))
+
             env = os.environ.copy()
             env.setdefault("TERM", "xterm-256color")
+            env["LINES"] = str(max(rows, 10))
+            env["COLUMNS"] = str(max(cols, 40))
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -656,8 +672,21 @@ class WebServer:
                     if s["logged_in"]:
                         return s
 
+            async def auto_send_login():
+                """
+                Type /login into the TUI for the user. ~1.6s gives the ink
+                splash/welcome banner enough time to render and grab stdin.
+                """
+                await asyncio.sleep(1.6)
+                if proc.returncode is None:
+                    try:
+                        os.write(master_fd, b"/login\r")
+                    except OSError:
+                        pass
+
             proc_task = asyncio.create_task(proc.wait())
             poll_task = asyncio.create_task(poll_status())
+            auto_login_task = asyncio.create_task(auto_send_login())
 
             try:
                 done, pending = await asyncio.wait(
@@ -666,6 +695,7 @@ class WebServer:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             finally:
+                auto_login_task.cancel()
                 try:
                     loop.remove_reader(master_fd)
                 except Exception:
@@ -750,6 +780,15 @@ class WebServer:
             except ProcessLookupError:
                 pass
 
+    async def _ws_claude_login_resize(self, user, cols: int, rows: int):
+        """Match the PTY size to xterm.js so the TUI relays out correctly."""
+        if not getattr(user, "admin", False):
+            return
+        fd = getattr(self, "_claude_login_master_fd", None)
+        if fd is None:
+            return
+        _set_pty_size(fd, max(rows, 10), max(cols, 40))
+
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
     async def _handle_ws(self, request):
@@ -825,13 +864,23 @@ class WebServer:
                     if not user:
                         await ws.send_json({"type": "error", "message": "먼저 로그인해 주세요."})
                         continue
-                    await self._ws_claude_login(ws, user)
+                    cols = int(data.get("cols") or 80)
+                    rows = int(data.get("rows") or 24)
+                    await self._ws_claude_login(ws, user, cols=cols, rows=rows)
                     continue
 
                 elif mtype == "claude_login_input":
                     if not user:
                         continue
                     await self._ws_claude_login_input(user, str(data.get("data", "")))
+                    continue
+
+                elif mtype == "claude_login_resize":
+                    if not user:
+                        continue
+                    cols = int(data.get("cols") or 80)
+                    rows = int(data.get("rows") or 24)
+                    await self._ws_claude_login_resize(user, cols, rows)
                     continue
 
                 elif mtype == "claude_login_cancel":

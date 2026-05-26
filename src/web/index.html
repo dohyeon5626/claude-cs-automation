@@ -137,7 +137,7 @@
         <span id="claude-login-status" class="text-xs text-slate-400 ml-2"></span>
         <button id="claude-login-close" class="ml-auto text-slate-400 hover:text-white text-xl leading-none">×</button>
       </div>
-      <div id="claude-login-terminal" class="flex-1 px-2 py-2 overflow-hidden"></div>
+      <div id="claude-login-terminal" class="flex-1 px-2 py-2 overflow-hidden bg-[#1e1e1e]" style="min-height: 400px"></div>
       <div class="px-4 py-2 text-[11px] text-slate-400 border-t border-slate-700 bg-slate-800 rounded-b-xl">
         터미널에서 <code class="text-slate-200">/login</code> 입력 → 표시되는 URL 클릭 → 브라우저에서 인증 완료. 로그인 감지되면 창이 자동으로 닫힙니다.
       </div>
@@ -146,6 +146,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
