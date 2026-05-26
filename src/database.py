@@ -7,8 +7,9 @@ from mysql.connector import Error as MySQLError
 from .config import DatabaseConfig
 
 # Cost-control caps for runaway queries
-_DEFAULT_LIMIT = 100        # auto-appended when a query has no LIMIT
-_MAX_LIMIT = 1000           # hard cap on any LIMIT value
+_DEFAULT_LIMIT = 100        # auto-appended when a plain SELECT has no LIMIT
+_MAX_LIMIT = 1000           # hard cap on plain SELECTs (raw row dumps)
+_MAX_AGG_LIMIT = 10_000     # higher cap for aggregation/statistics queries
 _QUERY_TIMEOUT_MS = 30_000  # 30s per-statement timeout (MySQL 5.7.8+)
 
 
@@ -52,6 +53,7 @@ class Database:
         clean = _cap_limit(clean)
 
         conn = mysql.connector.connect(**self._params)
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
             try:
@@ -64,12 +66,14 @@ class Database:
         except MySQLError as e:
             raise RuntimeError(_format_query_error(e))
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
             conn.close()
 
     def get_schema(self) -> str:
         """Read the live table/column structure from INFORMATION_SCHEMA."""
         conn = mysql.connector.connect(**self._params)
+        cursor = None
         try:
             cursor = conn.cursor(dictionary=True)
 
@@ -96,7 +100,8 @@ class Database:
         except MySQLError as e:
             raise RuntimeError(f"스키마 분석 실패: {e}")
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
             conn.close()
 
         tables: Dict[str, List[Dict[str, Any]]] = {}
@@ -136,27 +141,45 @@ class Database:
 # ── Query-cost helpers ─────────────────────────────────────────────────────
 
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)(?:\s*,\s*(\d+))?", re.IGNORECASE)
+_AGG_FUNC_RE = re.compile(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(", re.IGNORECASE)
+_GROUP_BY_RE = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
+
+
+def _is_aggregation_query(sql: str) -> bool:
+    """
+    A statistics-style query (COUNT/SUM/AVG/MIN/MAX or GROUP BY).
+    Result rows are bounded by the number of groups, not by raw row count,
+    so the strict row cap doesn't apply — the 30s timeout still does.
+    """
+    return bool(_AGG_FUNC_RE.search(sql)) or bool(_GROUP_BY_RE.search(sql))
 
 
 def _cap_limit(sql: str) -> str:
     """
-    Ensure the query has a LIMIT no greater than _MAX_LIMIT.
-      - No LIMIT at all       → append "LIMIT _DEFAULT_LIMIT"
-      - LIMIT N               → if N > _MAX_LIMIT, rewrite to _MAX_LIMIT
-      - LIMIT offset, count   → if count > _MAX_LIMIT, rewrite count to _MAX_LIMIT
+    Ensure the query has a LIMIT no greater than the per-query cap.
+    Plain SELECT (raw row dump):
+      - No LIMIT     → append "LIMIT _DEFAULT_LIMIT"
+      - LIMIT > cap  → rewrite to _MAX_LIMIT
+    Aggregation/statistics query:
+      - No LIMIT     → leave as-is (number of groups is the natural bound)
+      - LIMIT > cap  → rewrite to _MAX_AGG_LIMIT
     """
+    max_limit = _MAX_AGG_LIMIT if _is_aggregation_query(sql) else _MAX_LIMIT
+
     m = _LIMIT_RE.search(sql)
     if not m:
+        if max_limit == _MAX_AGG_LIMIT:
+            return sql  # don't force a LIMIT on aggregations
         return sql.rstrip(";") + f" LIMIT {_DEFAULT_LIMIT}"
 
     if m.group(2) is not None:
         offset, count = int(m.group(1)), int(m.group(2))
-        if count > _MAX_LIMIT:
-            return _LIMIT_RE.sub(f"LIMIT {offset}, {_MAX_LIMIT}", sql, count=1)
+        if count > max_limit:
+            return _LIMIT_RE.sub(f"LIMIT {offset}, {max_limit}", sql, count=1)
     else:
         n = int(m.group(1))
-        if n > _MAX_LIMIT:
-            return _LIMIT_RE.sub(f"LIMIT {_MAX_LIMIT}", sql, count=1)
+        if n > max_limit:
+            return _LIMIT_RE.sub(f"LIMIT {max_limit}", sql, count=1)
 
     return sql
 
