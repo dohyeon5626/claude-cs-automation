@@ -736,44 +736,29 @@
         break;
 
       case "claude_login_started":
-        // Status text already set by openClaudeLoginModal — no change here
+        $("claude-login-status").textContent = "실행 중";
         break;
 
-      case "claude_login_url":
-        // Navigate the pre-opened tab to the real OAuth URL. If the tab
-        // was blocked or already closed, fall back to opening here (may be
-        // blocked too) and surface the URL in the modal for manual click.
-        if (claudeLoginTab && !claudeLoginTab.closed) {
-          try {
-            claudeLoginTab.location.href = msg.url;
-          } catch (e) { /* cross-origin once it navigates — ignore */ }
-        } else {
-          const opened = window.open(msg.url, "_blank");
-          if (!opened) {
-            $("claude-login-status").textContent = "팝업 차단됨 — 아래 URL을 직접 여세요";
-          }
+      case "claude_login_data":
+        if (claudeLoginTerm && msg.data) {
+          try { claudeLoginTerm.write(b64ToBytes(msg.data)); } catch (e) {}
         }
-        appendClaudeLoginOutput("[인증 URL] " + msg.url);
-        break;
-
-      case "claude_login_output":
-        appendClaudeLoginOutput(msg.line || "");
         break;
 
       case "claude_login_done":
         state.claudeLoginInProgress = false;
-        $("claude-login-status").textContent = msg.ok ? "완료" : "실패";
-        appendClaudeLoginOutput("\n" + (msg.message || ""));
+        $("claude-login-status").textContent = msg.ok ? "완료" : "종료됨";
         if (msg.status) {
           state.claudeLoggedIn = !!msg.status.logged_in;
           renderClaudeStatus();
         } else {
           refreshClaudeStatus();
         }
-        claudeLoginTab = null;  // OAuth flow done — drop the handle
         if (msg.ok) {
-          // Auto-close on success so the user can immediately resume querying
-          setTimeout(closeClaudeLoginModal, 1500);
+          // Auto-close shortly after success so user can resume querying
+          setTimeout(() => {
+            $("claude-login-modal").classList.add("hidden");
+          }, 1200);
         }
         break;
 
@@ -964,10 +949,46 @@
     } catch (e) { /* offline — leave previous state */ }
   }
 
-  // Pre-opened tab for the Claude OAuth flow. Opened synchronously in the
-  // click handler (so popup blockers don't kill it), then navigated to the
-  // real URL once the CLI prints it.
-  let claudeLoginTab = null;
+  // xterm.js terminal that mirrors the Claude CLI subprocess running on
+  // the server. Initialized on first modal open; reused after that.
+  let claudeLoginTerm = null;
+
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  }
+
+  function ensureClaudeTerminal() {
+    if (claudeLoginTerm) return claudeLoginTerm;
+    if (typeof Terminal === "undefined") {
+      alert("터미널 라이브러리(xterm.js)를 로드하지 못했습니다. 페이지를 새로고침해 주세요.");
+      return null;
+    }
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'Menlo, Consolas, "SF Mono", monospace',
+      theme: { background: "#1e1e1e", foreground: "#e5e7eb" },
+      convertEol: true,
+    });
+    // Web-links addon makes URLs in the terminal clickable
+    try {
+      if (window.WebLinksAddon) term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
+    } catch (e) {}
+    term.open($("claude-login-terminal"));
+
+    // Forward every keystroke (or paste) to the server PTY
+    term.onData((data) => {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: "claude_login_input", data }));
+      }
+    });
+
+    claudeLoginTerm = term;
+    return term;
+  }
 
   function openClaudeLoginModal() {
     if (state.claudeLoginInProgress) return;
@@ -975,71 +996,31 @@
       alert("서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.");
       return;
     }
-
-    // Open the tab now while we're still in the click handler — browsers
-    // only permit window.open() in direct response to a user gesture.
-    try {
-      claudeLoginTab = window.open("about:blank", "_blank");
-      if (claudeLoginTab) {
-        claudeLoginTab.document.write(
-          '<!doctype html><meta charset="utf-8">' +
-          '<title>Claude 로그인 준비 중...</title>' +
-          '<style>body{font-family:system-ui,-apple-system,sans-serif;' +
-          'padding:40px;color:#475569;line-height:1.6}' +
-          'h2{color:#0f172a;font-size:18px;margin:0 0 8px}</style>' +
-          '<h2>Claude 로그인 페이지를 준비 중입니다...</h2>' +
-          '<p>인증 URL이 준비되면 자동으로 이동합니다. 잠시만 기다려 주세요.</p>'
-        );
-      }
-    } catch (e) {
-      claudeLoginTab = null;
-    }
-
-    $("claude-login-output").textContent = "";
-    $("claude-login-status").textContent = (
-      claudeLoginTab ? "새 탭에서 인증을 진행해 주세요" : "팝업이 차단됨 — 아래 URL을 직접 여세요"
-    );
     $("claude-login-modal").classList.remove("hidden");
+    $("claude-login-status").textContent = "시작 중...";
+
+    const term = ensureClaudeTerminal();
+    if (!term) return;
+    term.clear();
+    term.focus();
+
     state.claudeLoginInProgress = true;
     state.ws.send(JSON.stringify({ type: "claude_login" }));
   }
 
   function closeClaudeLoginModal() {
     $("claude-login-modal").classList.add("hidden");
-  }
-
-  function appendClaudeLoginOutput(line) {
-    const el = $("claude-login-output");
-    // Auto-linkify URLs so the operator can just click instead of selecting
-    const safe = line.replace(/[<>&]/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
-    const html = safe.replace(/(https?:\/\/[^\s]+)/g,
-      '<a href="$1" target="_blank" rel="noopener" class="text-indigo-600 underline">$1</a>');
-    el.innerHTML += html + "\n";
-    el.scrollTop = el.scrollHeight;
+    if (state.claudeLoginInProgress) {
+      // Tell server to kill the subprocess so we don't leave a dangling TUI
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: "claude_login_cancel" }));
+      }
+      state.claudeLoginInProgress = false;
+    }
   }
 
   $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
   $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
-
-  function submitClaudeLoginCode() {
-    const input = $("claude-login-code");
-    const code = (input.value || "").trim();
-    if (!code) return;
-    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      alert("서버에 연결되어 있지 않습니다.");
-      return;
-    }
-    state.ws.send(JSON.stringify({ type: "claude_login_paste", code }));
-    input.value = "";
-  }
-
-  $("claude-login-submit").addEventListener("click", submitClaudeLoginCode);
-  $("claude-login-code").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      submitClaudeLoginCode();
-    }
-  });
 
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {

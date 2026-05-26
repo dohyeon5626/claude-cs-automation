@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import csv as csvmod
 import html as _html
 import io
@@ -585,9 +586,6 @@ class WebServer:
         async with self._claude_login_lock:
             await ws.send_json({"type": "claude_login_started"})
 
-            # Spawn the CLI under a PTY. Without this Node.js sees stdout as
-            # a pipe and switches to block buffering — we'd never see the
-            # OAuth URL until the process exits.
             try:
                 master_fd, slave_fd = pty.openpty()
             except Exception as e:
@@ -598,23 +596,17 @@ class WebServer:
                 })
                 return
 
-            # Disable terminal echo so the code the user pastes doesn't get
-            # echoed back into the output stream.
-            try:
-                import termios
-                attrs = termios.tcgetattr(slave_fd)
-                attrs[3] &= ~termios.ECHO
-                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
-            except Exception:
-                pass
+            env = os.environ.copy()
+            env.setdefault("TERM", "xterm-256color")
 
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    self._config.claude_binary, "login",
+                    self._config.claude_binary,
                     stdin=slave_fd,
                     stdout=slave_fd,
                     stderr=slave_fd,
                     start_new_session=True,
+                    env=env,
                 )
             except Exception as e:
                 os.close(master_fd)
@@ -631,13 +623,8 @@ class WebServer:
             self._claude_login_master_fd = master_fd
 
             loop = asyncio.get_running_loop()
-            url_re = re.compile(r"https?://[^\s\]\)>\"]+")
-            ansi_re = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-            buffer = bytearray()
-            url_sent = False
 
             def on_readable():
-                nonlocal buffer, url_sent
                 try:
                     data = os.read(master_fd, 4096)
                 except OSError:
@@ -648,44 +635,11 @@ class WebServer:
                     except Exception:
                         pass
                     return
-                buffer.extend(data)
-
-                # Split on newline (PTY uses CRLF). Also flush a partial
-                # trailing chunk that looks like a prompt (no newline yet)
-                # so the URL gets sent even before EOL.
-                while True:
-                    nl = buffer.find(b"\n")
-                    if nl < 0:
-                        break
-                    line_bytes = bytes(buffer[:nl])
-                    del buffer[:nl + 1]
-                    text = ansi_re.sub("", line_bytes.decode("utf-8", "replace")).rstrip("\r")
-
-                    if not url_sent:
-                        m = url_re.search(text)
-                        if m:
-                            asyncio.create_task(ws.send_json({
-                                "type": "claude_login_url",
-                                "url": m.group(0),
-                            }))
-                            url_sent = True
-
-                    if text:
-                        asyncio.create_task(ws.send_json({
-                            "type": "claude_login_output",
-                            "line": text,
-                        }))
-
-                # Also try matching URL in the un-newlined trailing buffer
-                if not url_sent and buffer:
-                    tail = ansi_re.sub("", buffer.decode("utf-8", "replace"))
-                    m = url_re.search(tail)
-                    if m:
-                        asyncio.create_task(ws.send_json({
-                            "type": "claude_login_url",
-                            "url": m.group(0),
-                        }))
-                        url_sent = True
+                # Forward raw PTY bytes to the browser's xterm.js as base64
+                asyncio.create_task(ws.send_json({
+                    "type": "claude_login_data",
+                    "data": base64.b64encode(data).decode("ascii"),
+                }))
 
             try:
                 loop.add_reader(master_fd, on_readable)
@@ -693,7 +647,7 @@ class WebServer:
                 logger.warning(f"add_reader failed: {e}")
 
             async def poll_status():
-                """Detect success even if the CLI doesn't print a sentinel."""
+                """Auto-detect login success via the lightweight `claude -p OK` ping."""
                 while True:
                     await asyncio.sleep(3)
                     if ws.closed:
@@ -722,10 +676,21 @@ class WebServer:
                 if not t.done():
                     t.cancel()
 
+            # If the TUI is still running, ask it to quit first; SIGTERM as a
+            # backstop so we don't leak the subprocess.
+            if proc.returncode is None:
+                try:
+                    os.write(master_fd, b"/quit\n")
+                except OSError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    pass
             if proc.returncode is None:
                 try:
                     proc.terminate()
-                    await asyncio.wait_for(proc.wait(), timeout=5)
+                    await asyncio.wait_for(proc.wait(), timeout=3)
                 except (asyncio.TimeoutError, ProcessLookupError):
                     try:
                         proc.kill()
@@ -756,34 +721,34 @@ class WebServer:
                 "ok": ok,
                 "message": (
                     "로그인되었습니다." if ok
-                    else f"로그인에 실패했습니다. {status.get('detail', '')}"
+                    else f"로그인을 완료하지 못했습니다. {status.get('detail', '')}"
                 ),
                 "status": status,
             })
 
-    async def _ws_claude_login_paste(self, ws, user, code: str):
-        """Pipe a pasted OAuth code into the in-flight `claude login` PTY."""
+    async def _ws_claude_login_input(self, user, data: str):
+        """Forward a keystroke (or paste) from xterm.js into the live PTY."""
         if not getattr(user, "admin", False):
             return
         fd = getattr(self, "_claude_login_master_fd", None)
         proc = getattr(self, "_claude_login_proc", None)
         if fd is None or proc is None or proc.returncode is not None:
-            await ws.send_json({
-                "type": "claude_login_output",
-                "line": "[코드 전송 실패: 진행 중인 로그인이 없습니다]",
-            })
             return
         try:
-            os.write(fd, (code.strip() + "\n").encode("utf-8"))
-            await ws.send_json({
-                "type": "claude_login_output",
-                "line": "[코드를 CLI로 전달했습니다 — 인증 처리 중...]",
-            })
-        except OSError as e:
-            await ws.send_json({
-                "type": "claude_login_output",
-                "line": f"[코드 전송 실패: {e}]",
-            })
+            os.write(fd, data.encode("utf-8"))
+        except OSError:
+            pass
+
+    async def _ws_claude_login_cancel(self, user):
+        """User closed the modal — terminate the in-flight subprocess."""
+        if not getattr(user, "admin", False):
+            return
+        proc = getattr(self, "_claude_login_proc", None)
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
 
     # ── WebSocket: interactive chat ───────────────────────────────────────────
 
@@ -863,11 +828,16 @@ class WebServer:
                     await self._ws_claude_login(ws, user)
                     continue
 
-                elif mtype == "claude_login_paste":
+                elif mtype == "claude_login_input":
                     if not user:
                         continue
-                    code = str(data.get("code", ""))
-                    await self._ws_claude_login_paste(ws, user, code)
+                    await self._ws_claude_login_input(user, str(data.get("data", "")))
+                    continue
+
+                elif mtype == "claude_login_cancel":
+                    if not user:
+                        continue
+                    await self._ws_claude_login_cancel(user)
                     continue
 
                 elif mtype == "query":
