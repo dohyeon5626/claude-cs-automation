@@ -228,6 +228,9 @@ class WebServer:
         # Used by the paste handler to write the OAuth code to the CLI.
         self._claude_login_proc = None
         self._claude_login_master_fd: Optional[int] = None
+        # Set by _ws_claude_login_cancel so the cleanup path can skip the
+        # slow _get_claude_status call and release the lock immediately.
+        self._login_cancelled = False
 
     def build_app(self) -> web.Application:
         app = web.Application(middlewares=[_no_cache_for_shell])
@@ -245,10 +248,34 @@ class WebServer:
                 web.post("/api/query", self._api_query),
                 web.get("/api/download/{token}", self._serve_download),
                 web.get("/api/claude/status", self._api_claude_status),
+                web.get("/api/stats", self._api_stats),
                 web.get("/ws", self._handle_ws),
             ]
         )
+        app.on_startup.append(self._on_startup)
+        app.on_cleanup.append(self._on_cleanup)
         return app
+
+    async def _on_startup(self, app):
+        app["_download_gc_task"] = asyncio.create_task(self._download_gc_loop())
+
+    async def _on_cleanup(self, app):
+        task = app.get("_download_gc_task")
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _download_gc_loop(self):
+        """Periodically evict expired download entries so memory doesn't accumulate."""
+        while True:
+            await asyncio.sleep(5 * 60)  # every 5 minutes
+            now = time.time()
+            for tok in list(self._downloads):
+                if self._downloads[tok]["expires"] < now:
+                    del self._downloads[tok]
 
     # ── Brand / logo rendering ────────────────────────────────────────────────
 
@@ -556,6 +583,23 @@ class WebServer:
 
     # ── Claude CLI account management ─────────────────────────────────────────
 
+    async def _api_stats(self, request):
+        """Return the daily query stats from log/stats.json — admin only."""
+        token = self._extract_token(request)
+        user = self._auth.user_for_token(token)
+        if not user or not getattr(user, "admin", False):
+            return web.json_response({"error": "권한이 없습니다."}, status=403)
+        try:
+            from .audit import _STATS_FILE
+            if _STATS_FILE.exists():
+                import json as _json
+                data = _json.loads(_STATS_FILE.read_text(encoding="utf-8"))
+            else:
+                data = {}
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+        return web.json_response(data)
+
     async def _api_claude_status(self, request):
         """REST endpoint for the header status indicator on page load."""
         # Allow anyone (even unauthenticated) so the login view could also
@@ -599,14 +643,6 @@ class WebServer:
                 "type": "claude_login_done",
                 "ok": False,
                 "message": "Claude 로그인 권한이 없습니다.",
-            })
-            return
-
-        if self._claude_login_lock.locked():
-            await ws.send_json({
-                "type": "claude_login_done",
-                "ok": False,
-                "message": "다른 관리자가 이미 로그인 작업을 진행 중입니다.",
             })
             return
 
@@ -694,6 +730,11 @@ class WebServer:
             except Exception as e:
                 logger.warning(f"add_reader failed: {e}")
 
+            # Snapshot state before the login flow starts so poll_status can
+            # detect a *change* rather than a pre-existing login.
+            initial_status = await self._get_claude_status(force=True)
+            was_logged_in = initial_status["logged_in"]
+
             async def poll_status():
                 """Auto-detect login success via the lightweight `claude -p OK` ping."""
                 while True:
@@ -701,75 +742,76 @@ class WebServer:
                     if ws.closed:
                         return None
                     s = await self._get_claude_status(force=True)
-                    if s["logged_in"]:
+                    # Only trigger on a fresh login — ignore pre-existing session
+                    if s["logged_in"] and not was_logged_in:
                         return s
-
-            async def auto_send_login():
-                """
-                Type /login into the TUI for the user. ~1.6s gives the ink
-                splash/welcome banner enough time to render and grab stdin.
-                """
-                await asyncio.sleep(1.6)
-                if proc.returncode is None:
-                    try:
-                        os.write(master_fd, b"/login\r")
-                    except OSError:
-                        pass
 
             proc_task = asyncio.create_task(proc.wait())
             poll_task = asyncio.create_task(poll_status())
-            auto_login_task = asyncio.create_task(auto_send_login())
 
+            # Outer finally guarantees master_fd is closed even if an
+            # exception escapes the wait/cleanup block.
+            timed_out = False
             try:
-                done, pending = await asyncio.wait(
-                    [proc_task, poll_task],
-                    timeout=_CLAUDE_LOGIN_TIMEOUT,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-            finally:
-                auto_login_task.cancel()
                 try:
-                    loop.remove_reader(master_fd)
-                except Exception:
-                    pass
-
-            timed_out = not done
-            for t in (proc_task, poll_task):
-                if not t.done():
-                    t.cancel()
-
-            # If the TUI is still running, ask it to quit first; SIGTERM as a
-            # backstop so we don't leak the subprocess.
-            if proc.returncode is None:
-                try:
-                    os.write(master_fd, b"/quit\n")
-                except OSError:
-                    pass
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=2)
-                except asyncio.TimeoutError:
-                    pass
-            if proc.returncode is None:
-                try:
-                    proc.terminate()
-                    await asyncio.wait_for(proc.wait(), timeout=3)
-                except (asyncio.TimeoutError, ProcessLookupError):
+                    done, pending = await asyncio.wait(
+                        [proc_task, poll_task],
+                        timeout=_CLAUDE_LOGIN_TIMEOUT,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
                     try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
+                        loop.remove_reader(master_fd)
+                    except Exception:
                         pass
 
-            try:
-                os.close(master_fd)
-            except OSError:
-                pass
+                timed_out = not done
+                for t in (proc_task, poll_task):
+                    if not t.done():
+                        t.cancel()
 
-            if noop_dir:
-                shutil.rmtree(noop_dir, ignore_errors=True)
+                # If the TUI is still running, ask it to quit first; SIGTERM as a
+                # backstop so we don't leak the subprocess.
+                if proc.returncode is None:
+                    try:
+                        os.write(master_fd, b"/quit\n")
+                    except OSError:
+                        pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        pass
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await asyncio.wait_for(proc.wait(), timeout=3)
+                    except (asyncio.TimeoutError, ProcessLookupError):
+                        try:
+                            proc.kill()
+                            await proc.wait()
+                        except ProcessLookupError:
+                            pass
+            finally:
+                try:
+                    os.close(master_fd)
+                except OSError:
+                    pass
+                if noop_dir:
+                    shutil.rmtree(noop_dir, ignore_errors=True)
 
             self._claude_login_proc = None
             self._claude_login_master_fd = None
+
+            # User explicitly cancelled — skip the slow status check so the
+            # lock is released immediately and a re-login attempt can proceed.
+            if self._login_cancelled:
+                self._login_cancelled = False
+                await ws.send_json({
+                    "type": "claude_login_done",
+                    "ok": False,
+                    "message": "로그인이 취소되었습니다.",
+                })
+                return
 
             if timed_out:
                 await ws.send_json({
@@ -810,6 +852,7 @@ class WebServer:
             return
         proc = getattr(self, "_claude_login_proc", None)
         if proc and proc.returncode is None:
+            self._login_cancelled = True
             try:
                 proc.terminate()
             except ProcessLookupError:

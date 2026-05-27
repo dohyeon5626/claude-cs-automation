@@ -18,10 +18,28 @@ _LOG_FILE = _LOG_DIR / "queries.jsonl"
 _STATS_FILE = _LOG_DIR / "stats.json"
 _LOCK = threading.Lock()
 
+_LOG_MAX_BYTES = 50 * 1024 * 1024  # rotate at 50MB
+_LOG_BACKUP_COUNT = 5               # keep queries.jsonl.1 … .5
+
 
 def now_iso() -> str:
     """Local-timezone ISO 8601 timestamp."""
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _rotate_log_if_needed() -> None:
+    """Rotate queries.jsonl when it exceeds _LOG_MAX_BYTES. Caller holds _LOCK."""
+    try:
+        if not _LOG_FILE.exists() or _LOG_FILE.stat().st_size <= _LOG_MAX_BYTES:
+            return
+        for i in range(_LOG_BACKUP_COUNT - 1, 0, -1):
+            src = Path(f"{_LOG_FILE}.{i}")
+            dst = Path(f"{_LOG_FILE}.{i + 1}")
+            if src.exists():
+                src.rename(dst)
+        _LOG_FILE.rename(Path(f"{_LOG_FILE}.1"))
+    except Exception:
+        pass
 
 
 def log_query_event(entry: Dict[str, Any]) -> None:
@@ -33,6 +51,7 @@ def log_query_event(entry: Dict[str, Any]) -> None:
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         line = json.dumps(entry, ensure_ascii=False, default=str)
         with _LOCK:
+            _rotate_log_if_needed()
             with open(_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
             _update_stats_locked(entry)

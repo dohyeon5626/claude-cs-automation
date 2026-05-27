@@ -407,6 +407,7 @@
       state.messages.push(msg);
       renderMessageDOM(msg);
       saveHistory(target);
+      updateClearHistoryBtn();
     } else {
       // User has switched away — append to that service's stored history
       // without touching state.messages (which reflects the visible view).
@@ -426,7 +427,7 @@
   }
 
   function replayHistory(history) {
-    history.forEach((msg) => renderMessageDOM(msg));
+    history.forEach((msg) => { if (msg.role !== "error") renderMessageDOM(msg); });
     if (history.length > 0) addHistoryDividerDOM();
   }
 
@@ -526,6 +527,29 @@
     div.textContent = initialOf(svc.name);
     return div;
   }
+
+  function updateClearHistoryBtn() {
+    const btn = $("clear-history-btn");
+    if (state.currentService && state.messages.length > 0) {
+      btn.classList.remove("hidden");
+      btn.classList.add("flex");
+    } else {
+      btn.classList.add("hidden");
+      btn.classList.remove("flex");
+    }
+  }
+
+  function clearCurrentHistory() {
+    if (!state.currentService) return;
+    if (!confirm("현재 대화 내역을 모두 삭제할까요?")) return;
+    localStorage.removeItem(chatKey(state.currentService.id));
+    state.messages = [];
+    clearMessages();
+    showEmptyState();
+    updateClearHistoryBtn();
+  }
+
+  $("clear-history-btn").addEventListener("click", clearCurrentHistory);
 
   function setChatHeader(service) {
     // service: null OR {id, name, description, logo_url}
@@ -653,6 +677,7 @@
         if (typeof msg.admin === "boolean") {
           state.userAdmin = msg.admin;
           localStorage.setItem(STORE.userAdmin, msg.admin ? "1" : "");
+          renderAdminSidebarItems();
           renderClaudeStatus();
         }
         // Auto-select last-used (or first) service
@@ -694,6 +719,7 @@
         } else {
           showEmptyState();
         }
+        updateClearHistoryBtn();
         $("chat-input").focus();
         break;
       }
@@ -747,18 +773,16 @@
 
       case "claude_login_done":
         state.claudeLoginInProgress = false;
-        $("claude-login-status").textContent = msg.ok ? "완료" : "종료됨";
+        if (msg.ok) {
+          $("claude-login-status").textContent = "완료 ✓ — 창을 닫아도 됩니다";
+        } else {
+          $("claude-login-status").textContent = "종료됨";
+        }
         if (msg.status) {
           state.claudeLoggedIn = !!msg.status.logged_in;
           renderClaudeStatus();
         } else {
           refreshClaudeStatus();
-        }
-        if (msg.ok) {
-          // Auto-close shortly after success so user can resume querying
-          setTimeout(() => {
-            $("claude-login-modal").classList.add("hidden");
-          }, 1200);
         }
         break;
 
@@ -766,6 +790,12 @@
   }
 
   function handleDisconnect() {
+    // If the WS drops while login is in progress, reset the flag so the user
+    // can reopen the modal after reconnecting without it being stuck.
+    if (state.claudeLoginInProgress) {
+      state.claudeLoginInProgress = false;
+      $("claude-login-modal").classList.add("hidden");
+    }
     if (!state.token) return;
     if (!views.app.classList.contains("hidden")) {
       if (!state.currentService) {
@@ -904,16 +934,148 @@
     hideEmptyState();
     updateInputAvailable();
     showView("app");
+    renderAdminSidebarItems();
     renderClaudeStatus();
     refreshClaudeStatus();
   }
+
+  // ── Stats modal (admin only) ─────────────────────────────────────────────
+  function renderAdminSidebarItems() {
+    const btn = $("stats-btn");
+    if (state.userAdmin) {
+      btn.classList.remove("hidden");
+    } else {
+      btn.classList.add("hidden");
+    }
+  }
+
+  async function openStatsModal() {
+    $("stats-modal").classList.remove("hidden");
+    $("stats-body").innerHTML = '<div class="text-sm text-slate-400 text-center py-8">불러오는 중...</div>';
+    try {
+      const res = await fetch("/api/stats", {
+        headers: { "Authorization": "Bearer " + state.token },
+      });
+      if (!res.ok) throw new Error("권한이 없습니다.");
+      const data = await res.json();
+      renderStats(data);
+    } catch (e) {
+      $("stats-body").innerHTML = `<div class="text-sm text-red-500 text-center py-8">${e.message}</div>`;
+    }
+  }
+
+  function renderStats(data) {
+    const dates = Object.keys(data).sort().reverse();
+
+    if (dates.length === 0) {
+      $("stats-body").innerHTML = '<div class="text-sm text-slate-400 text-center py-8">아직 기록된 통계가 없습니다.</div>';
+      return;
+    }
+
+    // ── 요약 카드 ──
+    const today = dates[0];
+    const todayData = data[today] || {};
+    const last30 = dates.slice(0, 30);
+    const total30 = last30.reduce((s, d) => s + (data[d].total || 0), 0);
+    const answered30 = last30.reduce((s, d) => s + (data[d].answered || 0), 0);
+    const rate30 = total30 > 0 ? Math.round(answered30 / total30 * 100) : 0;
+    const todayRate = todayData.total > 0 ? Math.round((todayData.answered || 0) / todayData.total * 100) : 0;
+
+    // ── 서비스별 30일 집계 ──
+    const svcTotals = {};
+    last30.forEach((d) => {
+      Object.entries(data[d].by_service || {}).forEach(([svc, cnt]) => {
+        svcTotals[svc] = (svcTotals[svc] || 0) + cnt;
+      });
+    });
+    const svcRows = Object.entries(svcTotals).sort((a, b) => b[1] - a[1]);
+
+    const html = `
+      <div class="grid grid-cols-3 gap-4">
+        ${statCard("오늘 쿼리", todayData.total || 0, "건")}
+        ${statCard("오늘 성공률", todayRate, "%")}
+        ${statCard("최근 30일 쿼리", total30, "건")}
+      </div>
+
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">날짜별 현황 (최근 30일)</div>
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500">날짜</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">총 쿼리</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">성공</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">실패</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">성공률</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${last30.map((d) => {
+                const row = data[d];
+                const rate = row.total > 0 ? Math.round((row.answered || 0) / row.total * 100) : 0;
+                const isToday = d === today;
+                return `<tr class="${isToday ? "bg-indigo-50/60" : ""}">
+                  <td class="px-4 py-2.5 font-mono text-xs text-slate-700 ${isToday ? "font-semibold" : ""}">${d}${isToday ? ' <span class="text-indigo-500 text-[10px] font-medium">오늘</span>' : ""}</td>
+                  <td class="px-4 py-2.5 text-right font-medium text-slate-900">${row.total || 0}</td>
+                  <td class="px-4 py-2.5 text-right text-emerald-600">${row.answered || 0}</td>
+                  <td class="px-4 py-2.5 text-right text-rose-500">${row.failed || 0}</td>
+                  <td class="px-4 py-2.5 text-right">
+                    <span class="text-xs font-medium ${rate >= 80 ? "text-emerald-600" : rate >= 50 ? "text-amber-600" : "text-rose-500"}">${rate}%</span>
+                  </td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      ${svcRows.length > 0 ? `
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">서비스별 쿼리 (최근 30일)</div>
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-medium text-slate-500">서비스</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">쿼리 수</th>
+                <th class="px-4 py-2.5 text-right text-xs font-medium text-slate-500">비율</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${svcRows.map(([svc, cnt]) => `
+                <tr>
+                  <td class="px-4 py-2.5 text-slate-700">${svc}</td>
+                  <td class="px-4 py-2.5 text-right font-medium text-slate-900">${cnt}</td>
+                  <td class="px-4 py-2.5 text-right text-xs text-slate-500">${total30 > 0 ? Math.round(cnt / total30 * 100) : 0}%</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ""}
+    `;
+    $("stats-body").innerHTML = html;
+  }
+
+  function statCard(label, value, unit) {
+    return `
+      <div class="bg-slate-50 border border-slate-200 rounded-xl px-5 py-4">
+        <div class="text-xs text-slate-500 mb-1">${label}</div>
+        <div class="text-2xl font-bold text-slate-900">${value}<span class="text-sm font-normal text-slate-500 ml-1">${unit}</span></div>
+      </div>`;
+  }
+
+  $("stats-btn").addEventListener("click", openStatsModal);
+  $("stats-close").addEventListener("click", () => $("stats-modal").classList.add("hidden"));
+  $("stats-modal").addEventListener("click", (e) => {
+    if (e.target === $("stats-modal")) $("stats-modal").classList.add("hidden");
+  });
 
   // ── Claude CLI account status (header) ───────────────────────────────────
   function renderClaudeStatus() {
     const wrap = $("claude-status");
     const dot = $("claude-status-dot");
     const text = $("claude-status-text");
-    const loginBtn = $("claude-login-btn");
 
     // Non-admin: pill is completely hidden — they can't act on it anyway
     if (!state.userAdmin) {
@@ -927,15 +1089,12 @@
     if (state.claudeLoggedIn === null) {
       dot.className = "w-2 h-2 rounded-full bg-slate-300";
       text.textContent = "Claude 확인 중...";
-      loginBtn.textContent = "로그인";
     } else if (state.claudeLoggedIn) {
       dot.className = "w-2 h-2 rounded-full bg-emerald-500";
       text.textContent = "Claude 연결됨";
-      loginBtn.textContent = "새롭게 로그인";
     } else {
       dot.className = "w-2 h-2 rounded-full bg-slate-400";
       text.textContent = "Claude 로그아웃";
-      loginBtn.textContent = "로그인";
     }
   }
 
@@ -1015,26 +1174,47 @@
     return term;
   }
 
-  // Document-level paste handler — xterm's built-in paste sometimes misses
-  // events inside a modal (the helper textarea loses focus to the modal
-  // backdrop). Catching at capture phase lets us forward Cmd+V / right-click
-  // paste no matter what currently holds focus.
+  // Send text directly to the PTY via WebSocket.
+  function _sendToLoginPty(text) {
+    if (!text) return;
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "claude_login_input", data: text }));
+    } else if (claudeLoginTerm) {
+      try { claudeLoginTerm.paste(text); } catch (_) {}
+    }
+  }
+
+  // Cmd+V / Ctrl+V keydown handler — fires even when xterm has no focus.
+  // Tries Clipboard API first (no focus required); on failure falls back to
+  // focusing the terminal so the subsequent paste event fires normally.
+  document.addEventListener("keydown", (e) => {
+    if ($("claude-login-modal").classList.contains("hidden")) return;
+    if (!((e.metaKey || e.ctrlKey) && e.key === "v")) return;
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then((text) => {
+        if (!text) return;
+        e.preventDefault();
+        _sendToLoginPty(text);
+      }).catch(() => {
+        // Permission denied or API unavailable — focus terminal so the
+        // browser fires a paste event that the handler below can catch.
+        if (claudeLoginTerm) claudeLoginTerm.focus();
+      });
+    } else {
+      if (claudeLoginTerm) claudeLoginTerm.focus();
+    }
+  }, true);
+
+  // Document-level paste handler — catches paste events even when the
+  // xterm textarea is not focused (e.g. right-click paste, or after the
+  // Clipboard API fallback above restores focus in time).
   document.addEventListener("paste", (e) => {
     if ($("claude-login-modal").classList.contains("hidden")) return;
-    if (!claudeLoginTerm) return;
     const text = (e.clipboardData || window.clipboardData).getData("text");
     if (!text) return;
     e.preventDefault();
     e.stopPropagation();
-    try {
-      // Route through xterm so bracketed-paste mode is respected; onData
-      // then fires and forwards the (possibly wrapped) bytes to the PTY.
-      claudeLoginTerm.paste(text);
-    } catch (err) {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: "claude_login_input", data: text }));
-      }
-    }
+    _sendToLoginPty(text);
   }, true);
 
   function openClaudeLoginModal() {
@@ -1064,11 +1244,12 @@
         rows: term.rows,
       }));
       // Tiny delay so the click-to-show transition doesn't steal focus
-      setTimeout(() => term.focus(), 80);
+      setTimeout(() => { term.focus(); _startLoginFocusKeeper(); }, 80);
     });
   }
 
   function closeClaudeLoginModal() {
+    _stopLoginFocusKeeper();
     $("claude-login-modal").classList.add("hidden");
     if (state.claudeLoginInProgress) {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -1080,10 +1261,57 @@
 
   $("claude-login-btn").addEventListener("click", openClaudeLoginModal);
   $("claude-login-close").addEventListener("click", closeClaudeLoginModal);
-  // Refocus when user clicks anywhere inside the terminal area
-  $("claude-login-terminal").addEventListener("click", () => {
+
+
+  // Modal-level mousedown: prevent clicks on the backdrop from stealing focus.
+  $("claude-login-modal").addEventListener("mousedown", (e) => {
+    if ($("claude-login-close").contains(e.target)) return;
+    if ($("claude-login-terminal").contains(e.target)) return;
+    e.preventDefault();
     if (claudeLoginTerm) claudeLoginTerm.focus();
   });
+
+  // Focus keeper: calls claudeLoginTerm.focus() every 300ms while the modal
+  // is open. Unconditional — document.activeElement is unreliable across tab
+  // switches (it retains the old value even after keyboard focus is lost).
+  let _loginFocusKeeper = null;
+
+  function _startLoginFocusKeeper() {
+    if (_loginFocusKeeper) return;
+    _loginFocusKeeper = setInterval(() => {
+      if (!claudeLoginTerm || $("claude-login-modal").classList.contains("hidden")) {
+        clearInterval(_loginFocusKeeper);
+        _loginFocusKeeper = null;
+        return;
+      }
+      claudeLoginTerm.focus();
+    }, 300);
+  }
+
+  function _stopLoginFocusKeeper() {
+    if (_loginFocusKeeper) {
+      clearInterval(_loginFocusKeeper);
+      _loginFocusKeeper = null;
+    }
+  }
+
+  // Refocus with retries when returning to this tab or window.
+  // A single focus() call is often ignored by the browser during the
+  // tab-switch transition; retrying at 80/250/600ms covers the gap.
+  function _retryLoginFocus() {
+    if (!claudeLoginTerm || $("claude-login-modal").classList.contains("hidden")) return;
+    claudeLoginTerm.focus();
+    [80, 250, 600].forEach((d) =>
+      setTimeout(() => {
+        if (claudeLoginTerm && !$("claude-login-modal").classList.contains("hidden"))
+          claudeLoginTerm.focus();
+      }, d)
+    );
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") _retryLoginFocus();
+  });
+  window.addEventListener("focus", _retryLoginFocus);
 
   // ── Initialize ───────────────────────────────────────────────────────────
   function initialize() {

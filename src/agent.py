@@ -401,7 +401,10 @@ class ClaudeAgent:
                 stdout, stderr = proc.communicate(prompt, timeout=_CLI_TIMEOUT)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.communicate()
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
                 raise RuntimeError("Claude CLI 응답 시간이 초과되었습니다.")
         finally:
             if session is not None:
