@@ -12,6 +12,7 @@ class DatabaseConfig:
     name: str
     user: str
     password: str
+    kind: str = "mysql"  # mysql | postgres | oracle
 
 
 @dataclass
@@ -109,6 +110,7 @@ def _parse_service(s: dict) -> ServiceConfig:
             name=str(db["name"]),
             user=str(db["user"]),
             password=str(db["password"]),
+            kind=str(db.get("kind", "mysql") or "mysql").lower(),
         )
 
     return ServiceConfig(
@@ -147,6 +149,12 @@ def _validate(raw: dict):
                     raise ValueError(
                         f"서비스 '{sid}'의 database 에 '{key}' 가 없습니다."
                     )
+            kind = str(s["database"].get("kind", "mysql") or "mysql").lower()
+            if kind not in {"mysql", "postgres", "postgresql", "pg", "oracle"}:
+                raise ValueError(
+                    f"서비스 '{sid}'의 database.kind 가 잘못되었습니다: '{kind}'. "
+                    "mysql / postgres / oracle 중에서 선택하세요."
+                )
 
         for key in ("url", "branch"):
             if key not in s["github"]:

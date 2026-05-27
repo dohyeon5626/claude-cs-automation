@@ -175,7 +175,10 @@ class ClaudeAgent:
             live_schema = db.get_schema()
 
         # 3. Agentic loop
-        turn_prompt = self._build_initial_prompt(service, live_schema, user_query)
+        dialect = db.dialect if db is not None else None
+        turn_prompt = self._build_initial_prompt(
+            service, live_schema, user_query, dialect=dialect,
+        )
         iteration = 0
 
         try:
@@ -264,6 +267,7 @@ class ClaudeAgent:
         service: Service,
         live_schema: Optional[str],
         user_query: str,
+        dialect: Optional[str] = None,
     ) -> str:
         if live_schema is None:
             data_section = (
@@ -285,8 +289,9 @@ class ClaudeAgent:
                 "- 처리할 수 없는 요청이면 ANSWER로 사유를 한국어로 설명하세요.\n"
             )
         else:
+            dialect_label = (dialect or "sql").upper()
             data_section = (
-                f"## 데이터베이스 실시간 스키마\n{live_schema}\n"
+                f"## 데이터베이스 실시간 스키마 ({dialect_label})\n{live_schema}\n"
             )
             action_section = (
                 "## 행동 규약 (매우 중요)\n"
@@ -321,12 +326,23 @@ class ClaudeAgent:
                 "답변 본문에는 파일에 무엇이 담겼는지 1~2줄 요약을 함께 적으세요. "
                 "파일당 5MB 한도이며, 시트 단위로 자르거나 더 좁은 조건으로 다시 집계해 주세요.\n"
             )
+            if dialect == "oracle":
+                limit_rules = (
+                    "- Oracle 방언입니다. 행 제한은 `FETCH FIRST N ROWS ONLY` 를 사용하세요 (LIMIT 미지원).\n"
+                    "- 일반 SELECT는 한 번에 최대 1000행 (`FETCH FIRST` 미지정 시 자동으로 100행으로 잘림).\n"
+                    "- 통계 쿼리(`COUNT/SUM/AVG/MIN/MAX` 또는 `GROUP BY`)는 최대 10000행까지 허용되며 자동 행 제한이 붙지 않습니다.\n"
+                )
+            else:
+                # MySQL / PostgreSQL — same LIMIT syntax
+                limit_rules = (
+                    "- 일반 SELECT는 한 번에 최대 1000행까지 조회할 수 있습니다 (LIMIT 미지정 시 자동 LIMIT 100).\n"
+                    "- 통계 쿼리(`COUNT/SUM/AVG/MIN/MAX` 또는 `GROUP BY`)는 최대 10000행까지 허용되며 자동 LIMIT이 붙지 않습니다.\n"
+                )
             rules_section = (
                 "## 규칙\n"
                 "- SELECT 쿼리만 사용하세요. INSERT/UPDATE/DELETE/DROP/TRUNCATE는 절대 금지입니다.\n"
                 "- 비밀번호, 카드번호, 주민등록번호 등 민감한 정보는 조회하거나 노출하지 마세요.\n"
-                "- 일반 SELECT는 한 번에 최대 1000행까지 조회할 수 있습니다 (LIMIT 미지정 시 자동 LIMIT 100).\n"
-                "- 통계 쿼리(`COUNT/SUM/AVG/MIN/MAX` 또는 `GROUP BY`)는 최대 10000행까지 허용되며 자동 LIMIT이 붙지 않습니다. 큰 데이터는 집계해서 가져오세요.\n"
+                + limit_rules +
                 "- 쿼리는 30초를 초과하면 서버가 중단합니다. 무거운 조인·집계는 조건을 좁혀 사용하세요.\n"
                 "- 전체 테이블 덤프처럼 과도하게 큰 요청은 거절하고 ANSWER로 사유를 설명하세요.\n"
                 + _SECURITY_RULES +

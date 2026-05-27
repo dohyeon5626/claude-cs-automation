@@ -12,7 +12,7 @@ from .agent import (
 )
 from .auth import Authenticator
 from .config import AppConfig, load_config
-from .database import Database
+from .database import Database, create_database
 from .repository import check_git_config, sync_repo
 from .server import WebServer
 from .service import Service
@@ -98,9 +98,9 @@ def run_startup_checks(config: AppConfig) -> Dict[str, Service]:
         if svc.database is None:
             print("  - 데이터베이스 없음 (레포만 사용)")
         else:
-            print("  - 데이터베이스 연결...", end=" ", flush=True)
+            print(f"  - 데이터베이스 연결 ({svc.database.kind})...", end=" ", flush=True)
             try:
-                database = Database(svc.database)
+                database = create_database(svc.database)
                 print("OK")
             except RuntimeError as e:
                 _fail(str(e))

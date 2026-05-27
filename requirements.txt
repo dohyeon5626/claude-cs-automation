@@ -1,4 +1,16 @@
+# ─── 필수 (Core) ─────────────────────────────────────────────────────
+# 모든 환경에서 깔아야 하는 핵심 의존성
 aiohttp>=3.9.0
-mysql-connector-python>=8.0.0
 openpyxl>=3.1.0
 PyYAML>=6.0
+
+
+# ─── 데이터베이스 드라이버 (선택: 쓰는 것만 골라 설치) ───────────
+# 본인 서비스의 database.kind 에 맞는 파일을 추가로 설치하세요.
+#
+#   MySQL    →  pip install -r requirements-mysql.txt
+#   Postgres →  pip install -r requirements-postgres.txt
+#   Oracle   →  pip install -r requirements-oracle.txt
+#
+# 여러 종류의 서비스가 섞여 있으면 필요한 만큼 모두 설치하면 됩니다.
+# 안 쓰는 엔진은 깔지 않아도 서버는 정상 시작·동작합니다.

@@ -45,7 +45,11 @@ claude:
 #   github      (필수)   참조할 GitHub 레포지토리
 #                          url    : 레포 주소
 #                          branch : 기준 브랜치
-#   database    (선택)   조회할 MySQL DB. 생략하면 레포 문서만 사용
+#   database    (선택)   조회할 DB. 생략하면 레포 문서만 사용
+#                          kind    : "mysql" (기본) | "postgres" | "oracle"
+#                                    └ 엔진별 드라이버를 별도로 설치해야 함
+#                                      (requirements-<엔진>.txt 참고)
+#                          host/port/name/user/password : 접속 정보
 services:
 
   # ── 예시 1) DB 가 있는 서비스 ─────────────────────────────────────
@@ -57,6 +61,7 @@ services:
       url: "https://github.com/yourorg/order-service"
       branch: "main"
     database:
+      kind: "mysql"             # mysql | postgres | oracle (생략 시 mysql)
       host: "localhost"
       port: 3306
       name: "order_db"
