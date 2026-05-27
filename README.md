@@ -42,7 +42,8 @@ CS 담당자는 브라우저만 있으면 됩니다.
 ```
 - Python 3.11+
 - Git              git config --global user.name / user.email 설정
-- Claude CLI       Claude Code 설치 + 로그인. 'claude'가 PATH에 있어야 함
+- Claude CLI       Claude Code 설치. 'claude'가 PATH에 있어야 함 (로그아웃 상태여도
+                   서버는 시작되고, 관리자가 웹 UI에서 로그인 가능)
 - MySQL 접근       (DB가 있는 서비스에 한함) 서비스별 계정으로 접속 가능
 - GitHub 레포 접근  git clone/pull이 비대화식으로 동작 (Private은 SSH 키/토큰)
 ```
@@ -82,8 +83,9 @@ users:
   - id: "admin"
     password: "changeme"
     services: ["*"]
+    admin: true        # 통계·Claude CLI 관리 권한 부여 (선택)
 ```
-brand, 서비스별 logo, 사용자별 services 권한 등 세부 옵션은 `config.yml`의 주석에 정리되어 있습니다.
+brand, 서비스별 logo, 사용자별 services 권한, admin 플래그 등 세부 옵션은 `config.yml`의 주석에 정리되어 있습니다.
 
 ### 실행
 가상환경(venv) 안에서 실행하는 걸 권장합니다.
@@ -114,12 +116,27 @@ brand, 서비스별 logo, 사용자별 services 권한 등 세부 옵션은 `con
 
 접속 안 될 때 → 같은 WiFi인지, 방화벽이 포트(8765) 막고 있지 않은지 확인.
 
+### 관리자 기능
+`config.yml`의 사용자에 `admin: true` 를 부여하면 두 가지가 활성화됩니다.
+
+**통계 (사이드바 "통계" 버튼)**
+오늘 쿼리 수·성공률, 최근 30일 일자별 표, 서비스별 분포가 한 화면에 정리됩니다. `log/stats.json`을 그대로 읽어 보여 주는 식이라 별도 DB가 필요 없습니다.
+
+**Claude CLI 관리 (헤더 우측 "Claude CLI 열기" 버튼)**
+브라우저 안에서 진짜 터미널(xterm.js)이 떠서 서버의 `claude` CLI에 그대로 접근할 수 있습니다. 토큰이 소진되거나 다른 계정으로 바꿔야 할 때 `/login` 으로 재인증 가능 — **서버 재시작 불필요**.
+```
+- 모달의 OAuth URL을 클릭 → 새 탭에서 Anthropic 로그인
+- 발급된 인증 코드를 모달 터미널에 Cmd+V / Ctrl+V 로 붙여넣기
+- 인증 완료 시 헤더 표시가 자동으로 녹색(● Claude 연결됨)으로 전환
+```
+
 ### 로그
 질문 1건당 한 줄씩 `log/queries.jsonl` 에 JSON Lines 로 기록됩니다 (디렉터리 자동 생성). 한 줄에 시각·유저·서비스·질문 원문·실행된 SQL·소요 시간이 모두 담깁니다.
 ```json
 {"ts":"2026-05-24T16:18:03+09:00","user":"admin","service":"order","question":"...","answered":true,"iterations":2,"elapsed_ms":4123,"queries":[{"sql":"SELECT ...","rows":42,"ms":88,"error":null}],"answer_chars":850}
 ```
-같은 디렉터리의 `log/stats.json` 에는 날짜별 누적 통계(총 질문 수·성공·실패·서비스별 카운트)가 함께 갱신됩니다.
+같은 디렉터리의 `log/stats.json` 에는 날짜별 누적 통계(총 질문 수·성공·실패·서비스별 카운트)가 함께 갱신되며, 관리자 통계 모달이 이 파일을 읽어 보여 줍니다.
 ```json
 {"2026-05-24": {"total": 10, "answered": 8, "failed": 2, "by_service": {"order": 7, "knowledge": 3}}}
 ```
+`queries.jsonl` 은 50MB를 넘으면 `.1` ~ `.5` 로 자동 회전됩니다 (기본 5개 보관).
