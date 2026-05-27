@@ -92,22 +92,25 @@ users:
 brand, 서비스별 logo, 사용자별 services 권한, admin 플래그 등 세부 옵션은 `config.yml`의 주석에 정리되어 있습니다.
 
 ### 실행
-가상환경(venv) 안에서 실행하는 걸 권장합니다.
+`config.yml` 만 채워 두면 나머지는 자동입니다.
 ```
-- python -m venv .venv                  # 최초 1회
-- source .venv/bin/activate             # 매번 (macOS/Linux)
-- .venv\Scripts\Activate.ps1            # 매번 (Windows PowerShell)
-- pip install -r requirements.txt       # 최초 1회 (공통 의존성)
-
-# 위에 더해, 본인이 쓰는 DB 엔진만 골라서 추가 설치
-- pip install -r requirements-mysql.txt        # MySQL
-- pip install -r requirements-postgres.txt     # PostgreSQL
-- pip install -r requirements-oracle.txt       # Oracle
-
-- python run.py                         # 서버 시작
+- python run.py
 ```
-DB가 여러 엔진이 섞여 있으면 필요한 만큼 모두 설치하면 됩니다. 안 쓰는 엔진 드라이버는 깔지 않아도 서버가 정상 동작합니다 (`config.yml`의 `kind` 값을 보고 필요한 어댑터만 로드).<br/>
+첫 실행에서 알아서 `.venv` 를 만들고, 공통 의존성과 `config.yml` 의 `kind` 값에 맞는 DB 드라이버(`requirements-<kind>.txt`)를 설치한 뒤 서버를 시작합니다.<br/>
+두 번째부터는 의존성 체크만 빠르게 거치고 바로 기동 (이미 venv 안이면 그 venv를 그대로 사용).<br/>
 시작 검증(Git 설정 · Claude CLI · 서비스별 GitHub 레포·DB)을 통과하면 콘솔에 접속 주소가 출력됩니다. 종료는 Ctrl+C.
+
+<details>
+<summary>수동으로 환경을 관리하고 싶다면</summary>
+
+```
+- python -m venv .venv && source .venv/bin/activate    # macOS/Linux
+  (Windows PowerShell: .venv\Scripts\Activate.ps1)
+- pip install -r requirements.txt                      # 공통
+- pip install -r requirements-mysql.txt                # 본인 DB만 선별 (또는 -postgres / -oracle)
+- python run.py
+```
+</details>
 
 ### CS 담당자 접속
 서버와 **같은 WiFi**에 있는 PC라면 누구나 브라우저로 접속할 수 있습니다.<br/>
