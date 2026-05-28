@@ -14,6 +14,7 @@ instead of creating .venv.
 """
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -91,10 +92,19 @@ def _install_db_drivers():
     if not config_path.exists():
         return  # main.py will surface "config.yml 없음" with proper context
 
+    # Substitute ${VAR} / ${VAR:-default} before parsing so a kind written
+    # as "${DB_KIND:-mysql}" still resolves to a real driver name. We do a
+    # minimal regex here so we don't have to import src.config (which would
+    # pull in the rest of the project before we've verified deps).
+    _env_var_re = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-    except yaml.YAMLError as e:
+        text = config_path.read_text(encoding="utf-8")
+        text = _env_var_re.sub(
+            lambda m: os.environ.get(m.group(1)) or (m.group(2) if m.group(2) is not None else m.group(0)),
+            text,
+        )
+        raw = yaml.safe_load(text) or {}
+    except (yaml.YAMLError, OSError) as e:
         print(f"  ⚠ config.yml 파싱 오류: {e}")
         print("  ⚠ DB 드라이버 자동 설치를 건너뜁니다.")
         return

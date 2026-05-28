@@ -87,6 +87,16 @@ users:                                  # 웹에 로그인할 계정 — 여러 
 
 채워야 할 곳: `services[].github.url` / `database` 정보 / `users[]` 의 실제 계정. `brand`(앱 이름·로고)·서비스별 `logo`·`description` 등 부가 옵션은 `config.yml` 안의 주석에 정리되어 있습니다.
 
+**비밀번호 등을 환경변수로 빼고 싶다면** — `${VAR}` 또는 `${VAR:-기본값}` 문법을 그대로 쓰면 됩니다.
+```yaml
+database:
+  password: ${ORDER_DB_PASSWORD}
+users:
+  - id: "admin"
+    password: ${ADMIN_PASSWORD:-changeme}
+```
+값은 셸 환경변수(`export ORDER_DB_PASSWORD=...`) 또는 프로젝트 루트의 **`.env`** 파일에서 자동으로 읽어옵니다 (`KEY=VALUE` 한 줄씩, 주석은 `#`). `.env` 는 이미 `.gitignore` 에 들어 있어 커밋 사고가 안 납니다. `.env.example` 을 복사해서 시작하세요. 참조한 변수에 값이 없고 기본값도 없으면 서버 시작 시 어떤 변수가 비어 있는지 알려 줍니다.
+
 #### 3. 서버 시작
 ```
 python run.py

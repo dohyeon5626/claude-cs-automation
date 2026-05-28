@@ -1,8 +1,71 @@
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import yaml
+
+
+# ${VAR} or ${VAR:-default} — docker-compose / bash-ish syntax.
+# Only ALLCAPS-style names so we don't accidentally chew through arbitrary $ in
+# config values; if you need a literal "${...}" wrap the value in single quotes.
+_ENV_VAR_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
+
+
+def _load_dotenv(path: str = ".env") -> None:
+    """
+    Read KEY=VALUE pairs from .env into os.environ. OS env wins — values
+    already exported in the shell are NOT overwritten. Quiet no-op if the
+    file doesn't exist. Quotes around values are stripped; comments and
+    blank lines are ignored. No shell expansion.
+    """
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                val = val[1:-1]
+            os.environ.setdefault(key, val)
+
+
+def _substitute_env(text: str) -> str:
+    """
+    Replace ${VAR} and ${VAR:-default} occurrences with env var values.
+    Raises ValueError listing every missing var if any reference is
+    unresolved (no env value, no default) — better to fail loudly at
+    startup than to feed empty passwords into the DB driver.
+    """
+    missing = []
+
+    def repl(m):
+        name = m.group(1)
+        default = m.group(2)
+        val = os.environ.get(name)
+        if val not in (None, ""):
+            return val
+        if default is not None:
+            return default
+        missing.append(name)
+        return m.group(0)  # leave untouched; will fail below
+
+    result = _ENV_VAR_RE.sub(repl, text)
+    if missing:
+        names = ", ".join(sorted(set(missing)))
+        raise ValueError(
+            f"config.yml 이 참조하는 환경변수가 비어 있습니다: {names}\n"
+            "  - 셸에서 'export NAME=값' 으로 지정하거나\n"
+            "  - 프로젝트 루트의 .env 파일에 'NAME=값' 한 줄을 추가하거나\n"
+            "  - config.yml 에서 '${NAME:-기본값}' 형태로 기본값을 두세요."
+        )
+    return result
 
 
 @dataclass
@@ -63,8 +126,13 @@ def load_config(path: str = "config.yml") -> AppConfig:
             "config.yml 을 만들고 설정을 입력하세요."
         )
 
+    # Read as text first so we can substitute ${VAR} references against the
+    # combined OS env + .env file before YAML parsing.
+    _load_dotenv()
     with open(path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+        text = f.read()
+    text = _substitute_env(text)
+    raw = yaml.safe_load(text) or {}
 
     _validate(raw)
 
